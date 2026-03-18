@@ -1,0 +1,71 @@
+.claude
+*.iml
+# C extensions
+*.so
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+MANIFEST
+# PyInstaller
+#   Usually these files are written by a python script from a template
+#   before PyInstaller builds the exe, so as to inject date/other infos into it.
+*.manifest
+*.spec
+.idea/
+
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+cover/
+
+
+target/
+
+#maven
+pom.xml.releaseBackup
+release.properties
+
+# Presentation files
+*.odp
+*.pptx
+camel-kit-transparent.png
+generate_presentation.py
+generate_pptx.py
+.~lock.*
+
+
+
+
+# Knowledge layer large files
+embedding/src/main/resources/models/model.onnx
+mcp/src/main/resources/models/model.onnx
+mcp/src/test/resources/models/model.onnx
+indexer/src/main/resources/rh-build-camel/**/*.pdf
+indexer/src/main/resources/rh-build-camel/**/*.html
+indexer/src/main/resources/rh-build-camel/errata/*.json
+indexer/src/main/resources/rh-build-camel/errata/cves/*.json
+indexer/src/main/resources/rh-build-camel/jira-cache/*.json
+indexer/src/main/resources/rh-build-camel/kb-articles/
+index/src/main/resources/knowledge-index/*
+!/index/src/main/resources/knowledge-index/.gitkeep
+indexer/src/main/resources/rh-build-camel/**/*.md
+!/indexer/src/main/resources/rh-build-camel
