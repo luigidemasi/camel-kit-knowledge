@@ -22,7 +22,7 @@ public interface IndexResolverConfig {
     String artifactId();
 
     /** Pin to a specific version. If empty, resolves latest from maven-metadata.xml. */
-    @WithName("version")
+    @WithName("knowledge.mcp.version")
     Optional<String> version();
 
     /** Comma-separated list of additional Maven repository URLs. */

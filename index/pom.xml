@@ -14,12 +14,6 @@
     <name>Camel Kit :: Knowledge :: Index</name>
     <description>Pre-built Lucene knowledge index — independently versioned artifact</description>
 
-    <!-- Version is overridden at build time: -Drevision=202603131454 -->
-    <version>${revision}</version>
-
-    <properties>
-        <revision>0.0.0-LOCAL</revision>
-    </properties>
 
     <!-- No Java code — only index resources -->
     <build>

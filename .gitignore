@@ -65,7 +65,6 @@ indexer/src/main/resources/rh-build-camel/errata/*.json
 indexer/src/main/resources/rh-build-camel/errata/cves/*.json
 indexer/src/main/resources/rh-build-camel/jira-cache/*.json
 indexer/src/main/resources/rh-build-camel/kb-articles/
-index/src/main/resources/knowledge-index/*
 !/index/src/main/resources/knowledge-index/.gitkeep
 indexer/src/main/resources/rh-build-camel/**/*.md
 !/indexer/src/main/resources/rh-build-camel

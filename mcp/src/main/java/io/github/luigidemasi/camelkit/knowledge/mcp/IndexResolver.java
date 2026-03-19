@@ -59,6 +59,9 @@ public class IndexResolver {
     public Path resolve() throws IndexResolverException {
         RepositorySystem repoSystem = newRepositorySystem();
         Path localRepoPath = resolveLocalRepoPath();
+        System.out.printf("IndexResolver: local repo path = %s (exists: %b)%n",
+                localRepoPath, java.nio.file.Files.isDirectory(localRepoPath));
+        System.out.printf("IndexResolver: user.home = %s%n", System.getProperty("user.home"));
         LocalRepository localRepo = new LocalRepository(localRepoPath.toFile());
 
         DefaultRepositorySystemSession session = MavenRepositorySystemUtils.newSession();
@@ -68,6 +71,7 @@ public class IndexResolver {
         try {
             List<RemoteRepository> remoteRepos = buildRemoteRepositories();
             String version = resolveVersion(repoSystem, session, remoteRepos);
+            System.out.printf("IndexResolver: resolved version = %s%n", version);
 
             Artifact artifact = new DefaultArtifact(
                     config.groupId(), config.artifactId(), "jar", version);
@@ -88,7 +92,9 @@ public class IndexResolver {
             return extractIndexFromJar(jarPath);
 
         } catch (IndexResolverException e) {
+            System.out.printf("IndexResolver: IndexResolverException: %s%n", e.getMessage());
             Path fallback = findLatestLocalVersion(localRepoPath);
+            System.out.printf("IndexResolver: fallback JAR = %s%n", fallback);
             if (fallback != null) {
                 System.out.printf("WARNING: Remote resolution failed, using cached index: %s%n",
                         fallback);
@@ -96,7 +102,9 @@ public class IndexResolver {
             }
             throw e;
         } catch (Exception e) {
+            System.out.printf("IndexResolver: Exception: %s%n", e.getMessage());
             Path fallback = findLatestLocalVersion(localRepoPath);
+            System.out.printf("IndexResolver: fallback JAR = %s%n", fallback);
             if (fallback != null) {
                 System.out.printf("WARNING: Remote resolution failed (%s), using cached index: %s%n",
                         e.getMessage(), fallback);
@@ -173,7 +181,7 @@ public class IndexResolver {
                 if (!release.isEmpty()) return release;
             }
 
-            var versionNodes = doc.getElementsByTagName("version");
+            var versionNodes = doc.getElementsByTagName("knowledge.mcp.version");
             String latest = null;
             for (int i = 0; i < versionNodes.getLength(); i++) {
                 String v = versionNodes.item(i).getTextContent().trim();
@@ -259,6 +267,9 @@ public class IndexResolver {
         Path artifactDir = localRepoPath
                 .resolve(config.groupId().replace('.', '/'))
                 .resolve(config.artifactId());
+
+        System.out.printf("IndexResolver: looking for local versions in %s (exists: %b)%n",
+                artifactDir, Files.isDirectory(artifactDir));
 
         if (!Files.isDirectory(artifactDir)) return null;
 

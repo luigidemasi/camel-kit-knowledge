@@ -382,14 +382,23 @@ public class LuceneSearchService {
     private Path resolveIndex() throws IOException {
         // Try IndexResolver (downloads from Maven repo)
         try {
-            return indexResolver.resolve();
+            Path resolved = indexResolver.resolve();
+            System.out.printf("LuceneSearchService: IndexResolver succeeded, path = %s%n", resolved);
+            String[] files = resolved.toFile().list();
+            System.out.printf("LuceneSearchService: extracted %d files%n",
+                    files != null ? files.length : 0);
+            return resolved;
         } catch (IndexResolver.IndexResolverException e) {
             System.out.println("WARNING: IndexResolver failed (" + e.getMessage() +
                     "), falling back to classpath extraction");
         }
 
         // Fallback: extract from classpath (legacy — index bundled in uber-jar)
-        return extractIndexFromClasspath();
+        Path classpath = extractIndexFromClasspath();
+        String[] files = classpath.toFile().list();
+        System.out.printf("LuceneSearchService: classpath fallback, path = %s, files = %d%n",
+                classpath, files != null ? files.length : 0);
+        return classpath;
     }
 
     private Path extractIndexFromClasspath() throws IOException {
