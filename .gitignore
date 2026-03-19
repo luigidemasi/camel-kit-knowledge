@@ -52,9 +52,6 @@ generate_presentation.py
 generate_pptx.py
 .~lock.*
 
-
-
-
 # Knowledge layer large files
 embedding/src/main/resources/models/model.onnx
 mcp/src/main/resources/models/model.onnx
