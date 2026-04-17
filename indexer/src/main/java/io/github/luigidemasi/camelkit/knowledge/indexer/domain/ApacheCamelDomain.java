@@ -295,36 +295,96 @@ public class ApacheCamelDomain implements DocumentDomain {
 
     /**
      * Fetch all repos and convert AsciiDoc/Markdown to chunked ConvertedDocs.
+     *
+     * Downloads all repos in parallel (network-bound), then converts sequentially
+     * (AsciidoctorJ is not thread-safe — single JRuby runtime).
      */
     private List<ConvertedDoc> fetchAndConvertAll() throws IOException {
+        // ── Phase 1a: Download all repos in parallel ──
+        record RepoTask(String url, String ref, String localName) {}
+
+        List<RepoTask> tasks = new ArrayList<>();
+        tasks.add(new RepoTask(WEBSITE_REPO, "main", "camel-website"));
+
+        for (VersionSpec ver : VERSIONS) {
+            tasks.add(new RepoTask(CAMEL_REPO, ver.camelBranch(), "camel-" + ver.camelBranch()));
+            if (ver.quarkusBranch() != null) {
+                tasks.add(new RepoTask(QUARKUS_REPO, ver.quarkusBranch(), "camel-quarkus-" + ver.quarkusBranch()));
+            }
+            if (ver.springBootBranch() != null) {
+                tasks.add(new RepoTask(SPRING_REPO, ver.springBootBranch(), "camel-spring-boot-" + ver.springBootBranch()));
+            }
+        }
+
+        int parallelism = Integer.parseInt(System.getProperty("download.parallelism", "4"));
+        System.out.printf("  Downloading %d repos (%d parallel)...%n", tasks.size(), parallelism);
+        System.out.flush();
+
+        Map<String, Path> repoPaths = new ConcurrentHashMap<>();
+        List<String> errors = new ArrayList<>();
+        ExecutorService pool = Executors.newFixedThreadPool(parallelism);
+        long dlStart = System.currentTimeMillis();
+
+        for (RepoTask task : tasks) {
+            pool.submit(() -> {
+                try {
+                    Path path = repoFetcher.fetchRepo(task.url(), task.ref(), task.localName());
+                    repoPaths.put(task.localName(), path);
+                } catch (IOException e) {
+                    synchronized (errors) {
+                        errors.add(task.localName() + ": " + e.getMessage());
+                    }
+                    System.out.printf("  ERROR: Failed to download %s: %s%n",
+                            task.localName(), e.getMessage());
+                }
+            });
+        }
+
+        pool.shutdown();
+        try {
+            pool.awaitTermination(30, TimeUnit.MINUTES);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Download phase interrupted", e);
+        }
+
+        long dlElapsed = (System.currentTimeMillis() - dlStart) / 1000;
+        System.out.printf("  All repos downloaded: %d/%d succeeded (%ds)%n",
+                repoPaths.size(), tasks.size(), dlElapsed);
+        if (!errors.isEmpty()) {
+            System.out.printf("  WARN: %d repos failed: %s%n", errors.size(), errors);
+        }
+        System.out.flush();
+
+        // ── Phase 1b: Convert docs sequentially (AsciidoctorJ not thread-safe) ──
         List<ConvertedDoc> docs = new ArrayList<>();
 
-        // Clone camel-website once (release notes + CVEs are version-independent)
-        Path websiteRepo = repoFetcher.fetchRepo(WEBSITE_REPO, "main", "camel-website");
-        docs.addAll(convertReleaseNotes(websiteRepo));
-        docs.addAll(collectCveFiles(websiteRepo));
+        Path websiteRepo = repoPaths.get("camel-website");
+        if (websiteRepo != null) {
+            docs.addAll(convertReleaseNotes(websiteRepo));
+            docs.addAll(collectCveFiles(websiteRepo));
+        }
 
-        // Per-version repos
         for (VersionSpec ver : VERSIONS) {
             String label = ver.label();
 
-            // apache/camel
-            String camelLocalName = "camel-" + ver.camelBranch();
-            Path camelRepo = repoFetcher.fetchRepo(CAMEL_REPO, ver.camelBranch(), camelLocalName);
-            docs.addAll(convertCamelDocs(camelRepo, label));
-
-            // apache/camel-quarkus (skip if branch is null)
-            if (ver.quarkusBranch() != null) {
-                String qLocalName = "camel-quarkus-" + ver.quarkusBranch();
-                Path quarkusRepo = repoFetcher.fetchRepo(QUARKUS_REPO, ver.quarkusBranch(), qLocalName);
-                docs.addAll(convertQuarkusDocs(quarkusRepo, label));
+            Path camelRepo = repoPaths.get("camel-" + ver.camelBranch());
+            if (camelRepo != null) {
+                docs.addAll(convertCamelDocs(camelRepo, label));
             }
 
-            // apache/camel-spring-boot (skip if branch is null)
+            if (ver.quarkusBranch() != null) {
+                Path quarkusRepo = repoPaths.get("camel-quarkus-" + ver.quarkusBranch());
+                if (quarkusRepo != null) {
+                    docs.addAll(convertQuarkusDocs(quarkusRepo, label));
+                }
+            }
+
             if (ver.springBootBranch() != null) {
-                String sbLocalName = "camel-spring-boot-" + ver.springBootBranch();
-                Path springBootRepo = repoFetcher.fetchRepo(SPRING_REPO, ver.springBootBranch(), sbLocalName);
-                docs.addAll(convertSpringBootDocs(springBootRepo, label));
+                Path springBootRepo = repoPaths.get("camel-spring-boot-" + ver.springBootBranch());
+                if (springBootRepo != null) {
+                    docs.addAll(convertSpringBootDocs(springBootRepo, label));
+                }
             }
         }
 
