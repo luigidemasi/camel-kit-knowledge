@@ -77,53 +77,11 @@ public class GitRepoFetcher {
         long start = System.currentTimeMillis();
         Path zipFile = baseDir.resolve(localName + ".zip");
 
-        // Download with retry — large files can fail with stream resets
-        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-            String currentUrl = zipUrl;
-            try {
-                System.out.printf("  Downloading %s ...%n", currentUrl);
-                System.out.flush();
+        // Resolve tag vs branch URL (only once, before retry loop)
+        zipUrl = resolveZipUrl(zipUrl, baseUrl, refName);
 
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(currentUrl))
-                        .GET()
-                        .build();
-
-                HttpResponse<InputStream> response = httpClient.send(request,
-                        HttpResponse.BodyHandlers.ofInputStream());
-
-                if (response.statusCode() == 404 && currentUrl.contains("/refs/tags/")) {
-                    // Fallback: try as branch
-                    currentUrl = baseUrl + "/archive/refs/heads/" + refName + ".zip";
-                    zipUrl = currentUrl; // update for retries
-                    System.out.printf("  Tag not found, trying branch: %s ...%n", currentUrl);
-                    System.out.flush();
-                    request = HttpRequest.newBuilder().uri(URI.create(currentUrl)).GET().build();
-                    response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-                }
-
-                if (response.statusCode() != 200) {
-                    throw new IOException("HTTP " + response.statusCode());
-                }
-
-                long contentLength = response.headers().firstValueAsLong("Content-Length").orElse(-1);
-                downloadWithProgress(response.body(), zipFile, contentLength, localName);
-                break; // success
-
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new IOException("Download interrupted: " + currentUrl, e);
-            } catch (IOException e) {
-                Files.deleteIfExists(zipFile);
-                if (attempt == MAX_RETRIES) {
-                    throw new IOException("Failed to download " + currentUrl +
-                            " after " + MAX_RETRIES + " attempts: " + e.getMessage(), e);
-                }
-                System.out.printf("  WARN: Download failed (attempt %d/%d): %s — retrying...%n",
-                        attempt, MAX_RETRIES, e.getMessage());
-                System.out.flush();
-            }
-        }
+        // Download with retry + resume — large files can fail mid-stream
+        downloadWithRetry(zipUrl, zipFile, localName);
 
         // Extract ZIP — GitHub ZIPs have a top-level directory like "camel-camel-4.14.x/"
         // We strip that prefix and extract directly into repoDir
@@ -192,23 +150,114 @@ public class GitRepoFetcher {
     }
 
     /**
-     * Download an InputStream to a file with a progress bar.
-     * Shows: "  camel-4.14:  45.2 MB / 120.3 MB  [===========          ]  37%"
-     * If content length is unknown, shows bytes downloaded only.
+     * Resolve whether the ref is a tag or branch by trying tag URL first.
+     * If GitHub returns 404 on the tag URL, falls back to branch URL.
      */
-    private void downloadWithProgress(InputStream in, Path target, long totalBytes, String label) throws IOException {
+    private String resolveZipUrl(String tagUrl, String baseUrl, String refName) throws IOException {
+        if (!tagUrl.contains("/refs/tags/")) return tagUrl;
+
+        try {
+            HttpRequest head = HttpRequest.newBuilder()
+                    .uri(URI.create(tagUrl))
+                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                    .build();
+            HttpResponse<Void> resp = httpClient.send(head, HttpResponse.BodyHandlers.discarding());
+            if (resp.statusCode() != 404) return tagUrl;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted resolving URL", e);
+        }
+
+        String branchUrl = baseUrl + "/archive/refs/heads/" + refName + ".zip";
+        System.out.printf("  Tag not found, using branch: %s%n", branchUrl);
+        return branchUrl;
+    }
+
+    /**
+     * Download a file with retry + resume support.
+     * On failure, keeps the partial file and resumes from where it stopped
+     * using HTTP Range header.
+     */
+    private void downloadWithRetry(String url, Path target, String label) throws IOException {
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            long existingBytes = Files.exists(target) ? Files.size(target) : 0;
+
+            try {
+                HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .GET();
+
+                if (existingBytes > 0) {
+                    reqBuilder.header("Range", "bytes=" + existingBytes + "-");
+                    System.out.printf("  Resuming %s from %s ...%n", label, formatSize(existingBytes));
+                } else {
+                    System.out.printf("  Downloading %s ...%n", url);
+                }
+                System.out.flush();
+
+                HttpResponse<InputStream> response = httpClient.send(
+                        reqBuilder.build(), HttpResponse.BodyHandlers.ofInputStream());
+
+                int status = response.statusCode();
+
+                if (status == 416) {
+                    // Range not satisfiable — file is already complete
+                    System.out.printf("  %s already fully downloaded%n", label);
+                    return;
+                }
+
+                boolean resuming = (status == 206);
+                if (status != 200 && status != 206) {
+                    throw new IOException("HTTP " + status);
+                }
+
+                long contentLength = response.headers().firstValueAsLong("Content-Length").orElse(-1);
+                long totalBytes = resuming
+                        ? existingBytes + contentLength
+                        : contentLength;
+
+                downloadWithProgress(response.body(), target, existingBytes, totalBytes, label, resuming);
+                return; // success
+
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Download interrupted: " + url, e);
+            } catch (IOException e) {
+                // Keep partial file for resume on next attempt
+                long partialSize = Files.exists(target) ? Files.size(target) : 0;
+                if (attempt == MAX_RETRIES) {
+                    Files.deleteIfExists(target);
+                    throw new IOException("Failed to download " + url +
+                            " after " + MAX_RETRIES + " attempts: " + e.getMessage(), e);
+                }
+                System.out.printf("%n  WARN: Download failed at %s (attempt %d/%d): %s — resuming...%n",
+                        formatSize(partialSize), attempt, MAX_RETRIES, e.getMessage());
+                System.out.flush();
+            }
+        }
+    }
+
+    /**
+     * Download an InputStream to a file with a progress bar.
+     * Supports appending for resume.
+     */
+    private void downloadWithProgress(InputStream in, Path target, long alreadyDownloaded,
+                                       long totalBytes, String label, boolean append) throws IOException {
         byte[] buffer = new byte[65536];
-        long downloaded = 0;
+        long downloaded = alreadyDownloaded;
         int barWidth = 30;
         long lastPrint = 0;
 
-        try (OutputStream out = Files.newOutputStream(target)) {
+        var openOptions = append
+                ? new java.nio.file.OpenOption[]{java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND}
+                : new java.nio.file.OpenOption[]{java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING};
+
+        try (OutputStream out = Files.newOutputStream(target, openOptions)) {
             int bytesRead;
             while ((bytesRead = in.read(buffer)) != -1) {
                 out.write(buffer, 0, bytesRead);
                 downloaded += bytesRead;
 
-                // Update progress at most every 200ms
                 long now = System.currentTimeMillis();
                 if (now - lastPrint >= 200) {
                     lastPrint = now;
@@ -217,9 +266,8 @@ public class GitRepoFetcher {
             }
         }
 
-        // Final progress line
         printProgress(label, downloaded, totalBytes, barWidth);
-        System.out.println(); // newline after progress bar
+        System.out.println();
         System.out.flush();
     }
 
