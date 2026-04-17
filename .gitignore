@@ -65,3 +65,9 @@ indexer/src/main/resources/rh-build-camel/kb-articles/
 !/index/src/main/resources/knowledge-index/.gitkeep
 indexer/src/main/resources/rh-build-camel/**/*.md
 !/indexer/src/main/resources/rh-build-camel
+
+# Community knowledge — cloned repos and caches (rebuilt at index time)
+indexer/src/main/resources/apache-camel/repos/
+indexer/src/main/resources/apache-camel/asciidoc-cache/
+indexer/src/main/resources/apache-camel/jira-cache/
+indexer/src/main/resources/apache-camel/cve-cache/
