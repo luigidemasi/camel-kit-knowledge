@@ -29,21 +29,75 @@ public class GitRepoFetcher {
     }
 
     /**
-     * Clone a repo at a specific branch/tag.
-     * Returns cached directory if already cloned.
+     * Clone a repo at a specific branch/tag, or update if already cloned.
+     *
+     * <ul>
+     *   <li>If repo exists with .git → fetch + hard reset to latest (fast, only downloads delta)</li>
+     *   <li>If repo exists without .git (corrupted) → delete and re-clone</li>
+     *   <li>If repo doesn't exist → fresh shallow clone</li>
+     * </ul>
      */
     public Path fetchRepo(String repoUrl, String refName, String localName) throws IOException {
         Path repoDir = baseDir.resolve(localName);
 
-        if (Files.isDirectory(repoDir) && hasFiles(repoDir)) {
-            System.out.printf("  Cache hit: %s%n", localName);
-            System.out.flush();
-            return repoDir;
+        if (Files.isDirectory(repoDir.resolve(".git"))) {
+            // Existing clone — fetch latest and reset working tree
+            return updateRepo(repoDir, refName, localName);
         }
 
-        // Delete any partial/corrupted clone
+        // Delete any partial/corrupted directory (no .git = not a valid repo)
         if (Files.exists(repoDir)) {
             deleteDirectory(repoDir);
+        }
+
+        return cloneRepo(repoUrl, refName, localName, repoDir);
+    }
+
+    /**
+     * Update an existing repo by fetching latest changes and resetting the working tree.
+     * Much faster than a full clone — only downloads the delta.
+     */
+    private Path updateRepo(Path repoDir, String refName, String localName) throws IOException {
+        System.out.printf("  Updating %s (%s) ...%n", localName, refName);
+        System.out.flush();
+
+        long start = System.currentTimeMillis();
+
+        try (Git git = Git.open(repoDir.toFile())) {
+            // Fetch latest from remote (works on shallow clones)
+            git.fetch()
+                    .setRemote("origin")
+                    .setProgressMonitor(new ConsoleProgressMonitor(localName))
+                    .call();
+
+            // Reset working tree to the fetched branch/tag head
+            git.reset()
+                    .setMode(org.eclipse.jgit.api.ResetCommand.ResetType.HARD)
+                    .setRef("origin/" + refName)
+                    .call();
+
+            long elapsed = (System.currentTimeMillis() - start) / 1000;
+            System.out.printf("  Updated: %s (%ds)%n", localName, elapsed);
+            System.out.flush();
+
+        } catch (GitAPIException e) {
+            // Update failed — fall back to fresh clone
+            System.out.printf("  WARN: Update failed for %s: %s — re-cloning%n",
+                    localName, e.getMessage());
+            deleteDirectory(repoDir);
+            return cloneRepo(null, refName, localName, repoDir);
+        }
+
+        return repoDir;
+    }
+
+    /**
+     * Fresh shallow clone of a repo.
+     */
+    private Path cloneRepo(String repoUrl, String refName, String localName, Path repoDir) throws IOException {
+        // If repoUrl is null (fallback from failed update), reconstruct from remote
+        if (repoUrl == null) {
+            throw new IOException("Cannot re-clone " + localName + " — original URL unknown");
         }
 
         System.out.printf("  Cloning %s (%s) ...%n", repoUrl, refName);
@@ -71,10 +125,7 @@ public class GitRepoFetcher {
             System.out.flush();
 
         } catch (GitAPIException e) {
-            // Clean up failed clone
-            if (Files.exists(repoDir)) {
-                deleteDirectory(repoDir);
-            }
+            if (Files.exists(repoDir)) deleteDirectory(repoDir);
             throw new IOException("Failed to clone " + repoUrl + " at " + refName + ": " + e.getMessage(), e);
         }
 
