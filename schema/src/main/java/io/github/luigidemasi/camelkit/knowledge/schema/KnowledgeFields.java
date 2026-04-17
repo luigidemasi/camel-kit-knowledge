@@ -39,6 +39,15 @@ public final class KnowledgeFields {
     public static final String CVE_IDS = "cve_ids";                 // multi-valued
     public static final String FIXED_IN_VERSIONS = "fixed_in_versions"; // multi-valued
 
+    // CVE-specific fields (for Apache Camel community CVE advisories)
+    public static final String CVE_ID = "cve_id";                     // exact CVE identifier
+    public static final String AFFECTED_VERSIONS = "affected_versions"; // multi-valued version ranges
+    public static final String AFFECTED_COMPONENT = "affected_component"; // component name affected
+    public static final String PUBLISHED_DATE = "published_date";       // advisory publication date
+    public static final String CVSS_SCORE = "cvss_score";               // NVD CVSS 3.1 base score
+    public static final String CVSS_VECTOR = "cvss_vector";             // NVD CVSS vector string
+    public static final String CWE_ID = "cwe_id";                       // CWE classification
+
     // Domain metadata (stored once per domain, JSON-encoded)
     public static final String DOMAIN_META = "_domain_meta";
 }
