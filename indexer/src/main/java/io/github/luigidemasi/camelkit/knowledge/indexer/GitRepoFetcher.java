@@ -1,6 +1,8 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -31,11 +33,15 @@ public class GitRepoFetcher {
     public Path fetchRepo(String repoUrl, String refName, String localName) throws IOException {
         Path repoDir = baseDir.resolve(localName);
 
+        long start = System.currentTimeMillis();
+
         if (Files.isDirectory(repoDir.resolve(".git"))) {
             // Already cloned — pull latest
             System.out.printf("  Pulling %s (%s)...%n", localName, refName);
             try {
                 runGit(repoDir, "git", "pull", "--ff-only");
+                long elapsed = (System.currentTimeMillis() - start) / 1000;
+                System.out.printf("  Done pulling %s (%ds)%n", localName, elapsed);
             } catch (IOException e) {
                 System.out.printf("  WARN: Failed to pull %s: %s (using cached)%n",
                         localName, e.getMessage());
@@ -43,15 +49,20 @@ public class GitRepoFetcher {
         } else {
             // Fresh clone — shallow, single branch
             System.out.printf("  Cloning %s (%s)...%n", repoUrl, refName);
+            System.out.flush();
             Files.createDirectories(repoDir.getParent());
             runGit(baseDir, "git", "clone",
                     "--depth", "1",
                     "--single-branch",
                     "--branch", refName,
+                    "--progress",
                     repoUrl,
                     localName);
+            long elapsed = (System.currentTimeMillis() - start) / 1000;
+            System.out.printf("  Done cloning %s (%ds)%n", localName, elapsed);
         }
 
+        System.out.flush();
         return repoDir;
     }
 
@@ -61,10 +72,18 @@ public class GitRepoFetcher {
                     .directory(workDir.toFile())
                     .redirectErrorStream(true);
             Process process = pb.start();
-            String output = new String(process.getInputStream().readAllBytes());
+            // Stream output line-by-line so the user sees progress
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    System.out.println("    " + line);
+                    System.out.flush();
+                }
+            }
             int exitCode = process.waitFor();
             if (exitCode != 0) {
-                throw new IOException("git command failed (exit " + exitCode + "): " + output.trim());
+                throw new IOException("git command failed (exit " + exitCode + ")");
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
