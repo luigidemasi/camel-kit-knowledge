@@ -1,8 +1,5 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer;
 
-import org.eclipse.jgit.api.Git;
-import org.eclipse.jgit.api.errors.GitAPIException;
-
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -12,8 +9,8 @@ import java.util.List;
 
 /**
  * Clones or pulls Git repositories for document indexing.
- * Uses JGit for pure-Java operation (no git binary needed).
- * Repos are shallow-cloned to minimize download size.
+ * Uses native git via ProcessBuilder — JGit's shallow clone is
+ * 10-30x slower on large repos like apache/camel.
  */
 public class GitRepoFetcher {
 
@@ -36,31 +33,43 @@ public class GitRepoFetcher {
 
         if (Files.isDirectory(repoDir.resolve(".git"))) {
             // Already cloned — pull latest
-            try (Git git = Git.open(repoDir.toFile())) {
-                System.out.printf("  Pulling %s (%s)...%n", localName, refName);
-                git.pull().call();
-            } catch (GitAPIException e) {
+            System.out.printf("  Pulling %s (%s)...%n", localName, refName);
+            try {
+                runGit(repoDir, "git", "pull", "--ff-only");
+            } catch (IOException e) {
                 System.out.printf("  WARN: Failed to pull %s: %s (using cached)%n",
                         localName, e.getMessage());
             }
         } else {
             // Fresh clone — shallow, single branch
             System.out.printf("  Cloning %s (%s)...%n", repoUrl, refName);
-            try {
-                Git.cloneRepository()
-                        .setURI(repoUrl)
-                        .setDirectory(repoDir.toFile())
-                        .setBranch(refName)
-                        .setDepth(1)
-                        .setCloneAllBranches(false)
-                        .call()
-                        .close();
-            } catch (GitAPIException e) {
-                throw new IOException("Failed to clone " + repoUrl + " at " + refName, e);
-            }
+            Files.createDirectories(repoDir.getParent());
+            runGit(baseDir, "git", "clone",
+                    "--depth", "1",
+                    "--single-branch",
+                    "--branch", refName,
+                    repoUrl,
+                    localName);
         }
 
         return repoDir;
+    }
+
+    private void runGit(Path workDir, String... command) throws IOException {
+        try {
+            ProcessBuilder pb = new ProcessBuilder(command)
+                    .directory(workDir.toFile())
+                    .redirectErrorStream(true);
+            Process process = pb.start();
+            String output = new String(process.getInputStream().readAllBytes());
+            int exitCode = process.waitFor();
+            if (exitCode != 0) {
+                throw new IOException("git command failed (exit " + exitCode + "): " + output.trim());
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("git command interrupted", e);
+        }
     }
 
     /**
