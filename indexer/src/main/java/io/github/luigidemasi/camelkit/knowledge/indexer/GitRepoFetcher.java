@@ -2,6 +2,7 @@ package io.github.luigidemasi.camelkit.knowledge.indexer;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -106,12 +107,19 @@ public class GitRepoFetcher {
             throw new IOException("Failed to download " + zipUrl + " (HTTP " + response.statusCode() + ")");
         }
 
+        // Download with progress bar, then extract
+        long contentLength = response.headers().firstValueAsLong("Content-Length").orElse(-1);
+        Path zipFile = baseDir.resolve(localName + ".zip");
+        downloadWithProgress(response.body(), zipFile, contentLength, localName);
+
         // Extract ZIP — GitHub ZIPs have a top-level directory like "camel-camel-4.14.x/"
         // We strip that prefix and extract directly into repoDir
+        System.out.printf("  Extracting %s ...%n", localName);
+        System.out.flush();
         Files.createDirectories(repoDir);
         int fileCount = 0;
 
-        try (ZipInputStream zis = new ZipInputStream(response.body())) {
+        try (ZipInputStream zis = new ZipInputStream(Files.newInputStream(zipFile))) {
             ZipEntry entry;
             String stripPrefix = null;
 
@@ -149,6 +157,9 @@ public class GitRepoFetcher {
             }
         }
 
+        // Clean up zip file
+        Files.deleteIfExists(zipFile);
+
         long elapsed = (System.currentTimeMillis() - start) / 1000;
         System.out.printf("  Extracted %s: %d files (%ds)%n", localName, fileCount, elapsed);
         System.out.flush();
@@ -165,6 +176,60 @@ public class GitRepoFetcher {
             deleteDirectory(repoDir);
         }
         return fetchRepo(repoUrl, refName, localName);
+    }
+
+    /**
+     * Download an InputStream to a file with a progress bar.
+     * Shows: "  camel-4.14:  45.2 MB / 120.3 MB  [===========          ]  37%"
+     * If content length is unknown, shows bytes downloaded only.
+     */
+    private void downloadWithProgress(InputStream in, Path target, long totalBytes, String label) throws IOException {
+        byte[] buffer = new byte[65536];
+        long downloaded = 0;
+        int barWidth = 30;
+        long lastPrint = 0;
+
+        try (OutputStream out = Files.newOutputStream(target)) {
+            int bytesRead;
+            while ((bytesRead = in.read(buffer)) != -1) {
+                out.write(buffer, 0, bytesRead);
+                downloaded += bytesRead;
+
+                // Update progress at most every 200ms
+                long now = System.currentTimeMillis();
+                if (now - lastPrint >= 200) {
+                    lastPrint = now;
+                    printProgress(label, downloaded, totalBytes, barWidth);
+                }
+            }
+        }
+
+        // Final progress line
+        printProgress(label, downloaded, totalBytes, barWidth);
+        System.out.println(); // newline after progress bar
+        System.out.flush();
+    }
+
+    private void printProgress(String label, long downloaded, long totalBytes, int barWidth) {
+        String dlStr = formatSize(downloaded);
+
+        if (totalBytes > 0) {
+            double pct = (double) downloaded / totalBytes;
+            int filled = (int) (pct * barWidth);
+            String bar = "=".repeat(filled) + " ".repeat(barWidth - filled);
+            String totalStr = formatSize(totalBytes);
+            System.out.printf("\r  %-20s %8s / %8s  [%s]  %3.0f%%",
+                    label, dlStr, totalStr, bar, pct * 100);
+        } else {
+            System.out.printf("\r  %-20s %8s downloaded", label, dlStr);
+        }
+        System.out.flush();
+    }
+
+    private String formatSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        return String.format("%.1f MB", bytes / (1024.0 * 1024));
     }
 
     private boolean hasFiles(Path dir) throws IOException {
