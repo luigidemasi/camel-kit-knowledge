@@ -31,9 +31,12 @@ public class GitRepoFetcher {
     private final Path baseDir;
     private final HttpClient httpClient;
 
+    private static final int MAX_RETRIES = 3;
+
     public GitRepoFetcher(Path baseDir) {
         this.baseDir = baseDir;
         this.httpClient = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)  // HTTP/2 gets RST_STREAM on large GitHub downloads
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
     }
@@ -71,46 +74,56 @@ public class GitRepoFetcher {
             zipUrl = baseUrl + "/archive/refs/heads/" + refName + ".zip";
         }
 
-        System.out.printf("  Downloading %s ...%n", zipUrl);
-        System.out.flush();
-
         long start = System.currentTimeMillis();
+        Path zipFile = baseDir.resolve(localName + ".zip");
 
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(zipUrl))
-                .GET()
-                .build();
-
-        HttpResponse<InputStream> response;
-        try {
-            response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Download interrupted: " + zipUrl, e);
-        }
-
-        if (response.statusCode() == 404 && zipUrl.contains("/refs/tags/")) {
-            // Fallback: try as branch
-            zipUrl = baseUrl + "/archive/refs/heads/" + refName + ".zip";
-            System.out.printf("  Tag not found, trying branch: %s ...%n", zipUrl);
-            System.out.flush();
-            request = HttpRequest.newBuilder().uri(URI.create(zipUrl)).GET().build();
+        // Download with retry — large files can fail with stream resets
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            String currentUrl = zipUrl;
             try {
-                response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+                System.out.printf("  Downloading %s ...%n", currentUrl);
+                System.out.flush();
+
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(currentUrl))
+                        .GET()
+                        .build();
+
+                HttpResponse<InputStream> response = httpClient.send(request,
+                        HttpResponse.BodyHandlers.ofInputStream());
+
+                if (response.statusCode() == 404 && currentUrl.contains("/refs/tags/")) {
+                    // Fallback: try as branch
+                    currentUrl = baseUrl + "/archive/refs/heads/" + refName + ".zip";
+                    zipUrl = currentUrl; // update for retries
+                    System.out.printf("  Tag not found, trying branch: %s ...%n", currentUrl);
+                    System.out.flush();
+                    request = HttpRequest.newBuilder().uri(URI.create(currentUrl)).GET().build();
+                    response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+                }
+
+                if (response.statusCode() != 200) {
+                    throw new IOException("HTTP " + response.statusCode());
+                }
+
+                long contentLength = response.headers().firstValueAsLong("Content-Length").orElse(-1);
+                downloadWithProgress(response.body(), zipFile, contentLength, localName);
+                break; // success
+
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new IOException("Download interrupted: " + zipUrl, e);
+                throw new IOException("Download interrupted: " + currentUrl, e);
+            } catch (IOException e) {
+                Files.deleteIfExists(zipFile);
+                if (attempt == MAX_RETRIES) {
+                    throw new IOException("Failed to download " + currentUrl +
+                            " after " + MAX_RETRIES + " attempts: " + e.getMessage(), e);
+                }
+                System.out.printf("  WARN: Download failed (attempt %d/%d): %s — retrying...%n",
+                        attempt, MAX_RETRIES, e.getMessage());
+                System.out.flush();
             }
         }
-
-        if (response.statusCode() != 200) {
-            throw new IOException("Failed to download " + zipUrl + " (HTTP " + response.statusCode() + ")");
-        }
-
-        // Download with progress bar, then extract
-        long contentLength = response.headers().firstValueAsLong("Content-Length").orElse(-1);
-        Path zipFile = baseDir.resolve(localName + ".zip");
-        downloadWithProgress(response.body(), zipFile, contentLength, localName);
 
         // Extract ZIP — GitHub ZIPs have a top-level directory like "camel-camel-4.14.x/"
         // We strip that prefix and extract directly into repoDir
