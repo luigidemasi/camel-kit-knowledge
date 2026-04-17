@@ -8,45 +8,37 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * MCP server that exposes knowledge search tools.
- *
- * Each domain in the index gets two tool patterns:
- * - lookup: exact component name match
- * - search: full-text search across domain docs
- *
- * TODO: Replace static tools with dynamic registration based on index metadata
- * once the Quarkus MCP programmatic tool registration API is available.
+ * MCP server exposing Apache Camel community documentation search tools.
+ * 5 tools with camel_docs_* prefix.
  */
 public class KnowledgeMcpServer {
+
+    private static final String DOMAIN = "apache_camel";
 
     @Inject
     LuceneSearchService searchService;
 
-    @Tool(description = "Look up Red Hat Build of Apache Camel documentation for a specific component. " +
-            "Returns support status, configuration reference, and known issues. " +
-            "Use this to check if a component is supported by Red Hat.")
-    public String camel_rh_build_component_info(
-            @ToolArg(description = "Component name, e.g., 'camel-kafka', 'camel-amqp', 'kafka'") String component,
-            @ToolArg(description = "Product version, e.g., '4.14'. Optional — omit for all versions.", required = false) String version,
-            @ToolArg(description = "Runtime filter, e.g., 'quarkus', 'spring-boot'. Optional — omit for all runtimes.", required = false) String runtime
+    @Tool(description = "Look up Apache Camel documentation for a specific component. " +
+            "Returns component reference, usage examples, configuration options, and related CVEs. " +
+            "Use to check if a component exists and get its documentation.")
+    public String camel_docs_component_info(
+            @ToolArg(description = "Component name, e.g., 'kafka', 'http', 'amqp'") String component,
+            @ToolArg(description = "Camel version, e.g., '4.14'. Optional — omit for all versions.", required = false) String version,
+            @ToolArg(description = "Runtime filter: 'quarkus' or 'spring-boot'. Optional.", required = false) String runtime
     ) {
         try {
-            // Normalize runtime name (e.g., "spring-boot" vs "springBoot")
             String normalizedRuntime = normalizeRuntime(runtime);
 
-            // Try exact component lookup first
             List<LuceneSearchService.SearchResult> results =
-                    searchService.lookupComponent("rh_build_camel", component, version, normalizedRuntime);
+                    searchService.lookupComponent(DOMAIN, component, version, normalizedRuntime);
 
-            // If exact lookup found nothing, retry without runtime filter
             if (results.isEmpty() && normalizedRuntime != null) {
-                results = searchService.lookupComponent("rh_build_camel", component, version, null);
+                results = searchService.lookupComponent(DOMAIN, component, version, null);
             }
 
-            // If exact lookup still found nothing, fall back to hybrid search
             if (results.isEmpty()) {
                 String query = "camel-" + component + " component";
-                results = searchService.search("rh_build_camel", query, version, null, 5);
+                results = searchService.search(DOMAIN, query, version, null, 5);
             }
 
             if (results.isEmpty()) {
@@ -59,45 +51,76 @@ public class KnowledgeMcpServer {
         }
     }
 
-    /**
-     * Normalize runtime identifiers to match the values stored in the index.
-     * The index uses "quarkus" and "spring-boot" (from inferRuntimes in RhBuildCamelDomain).
-     */
-    private String normalizeRuntime(String runtime) {
-        if (runtime == null || runtime.isBlank()) return null;
-        String lower = runtime.toLowerCase().trim();
-        return switch (lower) {
-            case "springboot", "spring-boot", "spring_boot" -> "spring-boot";
-            case "quarkus" -> "quarkus";
-            case "main", "standalone" -> null; // "main" runtime docs have no runtime tag
-            default -> lower;
-        };
-    }
-
-    @Tool(description = "Search Red Hat Build of Apache Camel documentation by keyword. " +
-            "Use for general questions about supported configurations, release notes, " +
-            "migration guides, or any Red Hat-specific Camel information.")
-    public String camel_rh_build_search(
-            @ToolArg(description = "Search query, e.g., 'supported databases PostgreSQL'") String query,
-            @ToolArg(description = "Product version filter, e.g., '4.14'. Optional.", required = false) String version,
+    @Tool(description = "Search Apache Camel documentation by keyword. " +
+            "Covers component references, EIP patterns, user manual, migration guides, " +
+            "getting started guides, and release notes.")
+    public String camel_docs_search(
+            @ToolArg(description = "Search query, e.g., 'configure SSL for HTTP component'") String query,
+            @ToolArg(description = "Camel version filter, e.g., '4.14'. Optional.", required = false) String version,
             @ToolArg(description = "Maximum results to return (default 5)", required = false) Integer max_results
     ) {
         try {
             int maxResults = max_results != null ? max_results : 5;
             List<LuceneSearchService.SearchResult> results =
-                    searchService.search("rh_build_camel", query, version, null, maxResults);
-
+                    searchService.search(DOMAIN, query, version, null, maxResults);
             return formatResults(results);
         } catch (Exception e) {
-            return "{\"error\":\"" + e.getMessage() + "\"}";
+            return "{\"error\":\"" + escape(e.getMessage()) + "\"}";
         }
     }
 
-    @Tool(description = "Look up a JIRA issue to find in which Red Hat Build of Apache Camel release " +
-            "it was fixed or implemented. Accepts JIRA issue IDs like CEQ-12480, CSB-8351, RHBAC-127, " +
-            "CAMEL-22784, or ENTESB-*. Returns the release version, runtime, description, and context.")
-    public String camel_rh_build_jira_lookup(
-            @ToolArg(description = "JIRA issue ID, e.g., 'CSB-8351', 'CEQ-12480', 'CAMEL-22784', 'RHBAC-127'") String jira_id
+    @Tool(description = "Search Apache Camel CVE security advisories. " +
+            "Query by CVE ID, affected component, severity, or affected version. " +
+            "Returns CVE details, affected versions, fixed versions, and CVSS scores.")
+    public String camel_docs_cve_search(
+            @ToolArg(description = "CVE identifier, e.g., 'CVE-2024-22369'. Optional.", required = false) String cve_id,
+            @ToolArg(description = "Component name to find CVEs for, e.g., 'sql', 'cxf'. Optional.", required = false) String component,
+            @ToolArg(description = "Severity filter: 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'. Optional.", required = false) String severity,
+            @ToolArg(description = "Camel version to check for CVEs, e.g., '4.14'. Optional.", required = false) String version,
+            @ToolArg(description = "Maximum results (default 10)", required = false) Integer max_results
+    ) {
+        try {
+            int maxResults = max_results != null ? max_results : 10;
+
+            if (cve_id != null && !cve_id.isBlank()) {
+                List<LuceneSearchService.ErrataSearchResult> results =
+                        searchService.searchByCve(cve_id);
+                return formatErrataResults(results);
+            }
+
+            StringBuilder query = new StringBuilder();
+            if (component != null) query.append("camel-").append(component).append(" ");
+            if (severity != null) query.append(severity).append(" ");
+            query.append("CVE security vulnerability");
+
+            List<LuceneSearchService.ErrataSearchResult> results =
+                    searchService.searchErrata(null, severity, version, query.toString().trim(), maxResults);
+            return formatErrataResults(results);
+        } catch (Exception e) {
+            return "{\"error\":\"" + escape(e.getMessage()) + "\"}";
+        }
+    }
+
+    @Tool(description = "Get release notes for a specific Apache Camel version. " +
+            "Returns new features, bug fixes, and JIRA issues included in the release.")
+    public String camel_docs_release_info(
+            @ToolArg(description = "Camel version, e.g., '4.14', '4.18.1'") String version,
+            @ToolArg(description = "Maximum results (default 20)", required = false) Integer max_results
+    ) {
+        try {
+            int maxResults = max_results != null ? max_results : 20;
+            List<LuceneSearchService.SearchResult> results =
+                    searchService.search(DOMAIN, "release " + version, version, "release-notes", maxResults);
+            return formatResults(results);
+        } catch (Exception e) {
+            return "{\"error\":\"" + escape(e.getMessage()) + "\"}";
+        }
+    }
+
+    @Tool(description = "Look up a JIRA issue to find in which Apache Camel release " +
+            "it was fixed or implemented. Returns release version, description, and context.")
+    public String camel_docs_jira_lookup(
+            @ToolArg(description = "JIRA issue ID, e.g., 'CAMEL-22784'") String jira_id
     ) {
         try {
             List<LuceneSearchService.SearchResult> results =
@@ -113,84 +136,15 @@ public class KnowledgeMcpServer {
         }
     }
 
-    @Tool(description = "Search Red Hat errata by CVE ID. " +
-            "Returns all errata that address a specific CVE, with severity, advisory type, " +
-            "and affected product versions. Use for questions like 'is CVE-2021-44228 fixed?'")
-    public String camel_rh_build_cve_search(
-            @ToolArg(description = "CVE identifier, e.g., 'CVE-2021-44228'") String cve_id
-    ) {
-        try {
-            List<LuceneSearchService.ErrataSearchResult> results =
-                    searchService.searchByCve(cve_id);
-
-            if (results.isEmpty()) {
-                return "{\"found\":false,\"results\":[]}";
-            }
-
-            return formatErrataResults(results);
-        } catch (Exception e) {
-            return "{\"error\":\"" + e.getMessage() + "\"}";
-        }
-    }
-
-    @Tool(description = "Search Red Hat errata by type, severity, and/or version. " +
-            "Use for questions like 'all Critical security fixes in Camel 4.14' " +
-            "or 'Bug Fix advisories for version 4.8'.")
-    public String camel_rh_build_bugfix_search(
-            @ToolArg(description = "Advisory type: 'Security Advisory', 'Bug Fix', or 'Enhancement'", required = false) String advisory_type,
-            @ToolArg(description = "Severity: 'Critical', 'Important', 'Moderate', or 'Low'", required = false) String severity,
-            @ToolArg(description = "Product version, e.g., '4.14'", required = false) String version,
-            @ToolArg(description = "Optional free-text search within errata content", required = false) String query,
-            @ToolArg(description = "Maximum results to return (default 10)", required = false) Integer max_results
-    ) {
-        try {
-            int maxResults = max_results != null ? max_results : 10;
-            List<LuceneSearchService.ErrataSearchResult> results =
-                    searchService.searchErrata(advisory_type, severity, version, query, maxResults);
-
-            return formatErrataResults(results);
-        } catch (Exception e) {
-            return "{\"error\":\"" + e.getMessage() + "\"}";
-        }
-    }
-
-    @Tool(description = "Get all errata (security fixes, bug fixes, enhancements) for a specific " +
-            "Red Hat Build of Apache Camel release version. " +
-            "Use for questions like 'what was fixed in Camel 4.14?' or 'release notes for 4.8'.")
-    public String camel_rh_build_release_info(
-            @ToolArg(description = "Product version, e.g., '4.14', '4.8', '7.12'") String version,
-            @ToolArg(description = "Optional advisory type filter: 'Security Advisory', 'Bug Fix', or 'Enhancement'", required = false) String advisory_type,
-            @ToolArg(description = "Maximum results to return (default 20)", required = false) Integer max_results
-    ) {
-        try {
-            int maxResults = max_results != null ? max_results : 20;
-            List<LuceneSearchService.ErrataSearchResult> results =
-                    searchService.searchByVersion(version, advisory_type, maxResults);
-
-            return formatErrataResults(results);
-        } catch (Exception e) {
-            return "{\"error\":\"" + e.getMessage() + "\"}";
-        }
-    }
-
-    @Tool(description = "Search Red Hat Build of Apache Camel supported configurations — " +
-            "platforms, databases, JDKs, operating systems, and middleware versions. " +
-            "Use for questions like 'is PostgreSQL 16 supported with Camel 4.14?' " +
-            "or 'which JDK versions work with Camel 4.8?'")
-    public String camel_rh_build_supported_configs(
-            @ToolArg(description = "Search query, e.g., 'PostgreSQL 16 supported', 'JDK 21'") String query,
-            @ToolArg(description = "Product version filter, e.g., '4.14'. Optional.", required = false) String version,
-            @ToolArg(description = "Maximum results to return (default 5)", required = false) Integer max_results
-    ) {
-        try {
-            int maxResults = max_results != null ? max_results : 5;
-            List<LuceneSearchService.SearchResult> results =
-                    searchService.search("rh_build_camel", query, version, null, maxResults);
-
-            return formatResults(results);
-        } catch (Exception e) {
-            return "{\"error\":\"" + e.getMessage() + "\"}";
-        }
+    private String normalizeRuntime(String runtime) {
+        if (runtime == null || runtime.isBlank()) return null;
+        String lower = runtime.toLowerCase().trim();
+        return switch (lower) {
+            case "springboot", "spring-boot", "spring_boot" -> "spring-boot";
+            case "quarkus" -> "quarkus";
+            case "main", "standalone" -> null;
+            default -> lower;
+        };
     }
 
     private String formatResults(List<LuceneSearchService.SearchResult> results) {
