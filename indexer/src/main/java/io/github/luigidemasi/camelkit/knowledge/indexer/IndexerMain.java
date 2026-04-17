@@ -2,7 +2,7 @@ package io.github.luigidemasi.camelkit.knowledge.indexer;
 
 import io.github.luigidemasi.camelkit.knowledge.embedding.OnnxEmbeddingProvider;
 import io.github.luigidemasi.camelkit.knowledge.indexer.domain.DocumentDomain;
-import io.github.luigidemasi.camelkit.knowledge.indexer.domain.RhBuildCamelDomain;
+import io.github.luigidemasi.camelkit.knowledge.indexer.domain.ApacheCamelDomain;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -21,7 +21,6 @@ import java.util.List;
  *   -Dindex.resources=path     Indexer resources directory (HTML guides, errata JSON)
  *   -Dindex.cache=path         Docling markdown cache directory
  *
- * Requires DOCLING_URL environment variable pointing to a running docling-serve instance.
  */
 public class IndexerMain {
 
@@ -44,22 +43,14 @@ public class IndexerMain {
                 null,
                 moduleDir.resolve("src/main/resources").toString());
 
-        String doclingUrl = System.getProperty("docling.url", System.getenv("DOCLING_URL"));
-        if (doclingUrl == null || doclingUrl.isBlank()) {
-            System.err.println("ERROR: DOCLING_URL environment variable or -Ddocling.url system property is required.");
-            System.err.println("Start docling-serve: docker run -p 5001:5001 quay.io/docling-project/docling-serve");
-            System.exit(1);
-        }
-
         System.out.println("Building camel-kit knowledge index...");
         System.out.println("Output: " + outputDir);
         System.out.println("Resources: " + resourcesDir);
         System.out.println("Cache: " + cacheDir);
-        System.out.println("Docling: " + doclingUrl);
 
         Files.createDirectories(outputDir);
 
-        List<DocumentDomain> domains = buildDomains(cacheDir, resourcesDir, doclingUrl);
+        List<DocumentDomain> domains = buildDomains(cacheDir, resourcesDir);
 
         System.out.println("Loading embedding model...");
         OnnxEmbeddingProvider embeddingProvider = new OnnxEmbeddingProvider();
@@ -89,11 +80,11 @@ public class IndexerMain {
         return Path.of(defaultValue).toAbsolutePath();
     }
 
-    private static List<DocumentDomain> buildDomains(Path cacheDir, Path resourcesDir, String doclingUrl) throws IOException {
+    private static List<DocumentDomain> buildDomains(Path cacheDir, Path resourcesDir) throws IOException {
         List<DocumentDomain> domains = new ArrayList<>();
 
         // Add all registered domains here
-        domains.add(new RhBuildCamelDomain(cacheDir, resourcesDir, doclingUrl));
+        domains.add(new ApacheCamelDomain(cacheDir, resourcesDir));
 
         return domains;
     }
