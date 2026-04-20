@@ -4,12 +4,14 @@ import org.eclipse.jgit.api.CloneCommand;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.lib.ProgressMonitor;
+import org.eclipse.jgit.lib.Ref;
 
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 
@@ -51,6 +53,61 @@ public class GitRepoFetcher {
         }
 
         return cloneRepo(repoUrl, refName, localName, repoDir);
+    }
+
+    /**
+     * Tag-aware fetchRepo overload.
+     * For tags (immutable), uses a {@code .fetched-tag} marker file to detect cache hits.
+     * If the marker doesn't match, deletes and re-clones.
+     * For branches, delegates to the existing {@link #fetchRepo(String, String, String)}.
+     */
+    public Path fetchRepo(String repoUrl, String refName, String localName, boolean isTag) throws IOException {
+        if (!isTag) {
+            return fetchRepo(repoUrl, refName, localName);
+        }
+
+        Path repoDir = baseDir.resolve(localName);
+        Path tagMarker = repoDir.resolve(".fetched-tag");
+
+        if (Files.isDirectory(repoDir.resolve(".git")) && Files.exists(tagMarker)) {
+            String cachedTag = Files.readString(tagMarker).trim();
+            if (cachedTag.equals(refName)) {
+                System.out.printf("  Reusing %s (tag: %s)%n", localName, refName);
+                System.out.flush();
+                return repoDir;
+            }
+        }
+
+        if (Files.exists(repoDir)) {
+            deleteDirectory(repoDir);
+        }
+
+        Path result = cloneRepo(repoUrl, "refs/tags/" + refName, localName, repoDir);
+        Files.writeString(result.resolve(".fetched-tag"), refName);
+        return result;
+    }
+
+    /**
+     * Lists all tags from a remote Git repository without cloning it.
+     * Uses JGit's {@code ls-remote --tags} equivalent.
+     *
+     * @param repoUrl the remote repository URL
+     * @return tag names without {@code refs/tags/} prefix, excluding dereferenced {@code ^{}} entries
+     */
+    public static List<String> listRemoteTags(String repoUrl) throws IOException {
+        try {
+            Collection<Ref> refs = Git.lsRemoteRepository()
+                    .setRemote(repoUrl)
+                    .setTags(true)
+                    .call();
+
+            return refs.stream()
+                    .map(ref -> ref.getName().replaceFirst("^refs/tags/", ""))
+                    .filter(name -> !name.endsWith("^{}"))
+                    .toList();
+        } catch (GitAPIException e) {
+            throw new IOException("Failed to list tags from " + repoUrl, e);
+        }
     }
 
     /**
