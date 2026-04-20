@@ -83,6 +83,7 @@ public class ApacheCamelDomain implements DocumentDomain {
     private final CamelCatalogIndexer catalogIndexer;
     private final Path reposDir;
     private final Path cveCacheDir;
+    private final Path websiteRepoPath;
     private final List<VersionResolver.ResolvedVersion> versions;
     private final double minReleaseVersion;
 
@@ -109,10 +110,10 @@ public class ApacheCamelDomain implements DocumentDomain {
         this.sectionChunker = new SectionChunker();
         this.jiraFetcher = new JiraFetcher(jiraCacheDir);
 
-        // Clone website repo first (needed for version resolution)
+        // Clone website repo first (needed for version resolution, reused in fetchAndConvertAll)
         try {
-            Path websiteRepo = repoFetcher.fetchRepo(WEBSITE_REPO, "main", "camel-website");
-            this.versions = VersionResolver.resolveVersions(websiteRepo);
+            this.websiteRepoPath = repoFetcher.fetchRepo(WEBSITE_REPO, "main", "camel-website");
+            this.versions = VersionResolver.resolveVersions(websiteRepoPath);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Version resolution interrupted", e);
@@ -323,9 +324,8 @@ public class ApacheCamelDomain implements DocumentDomain {
     private List<ConvertedDoc> fetchAndConvertAll() throws IOException {
         record RepoTask(String url, String ref, String localName, boolean isTag) {}
 
-        // Build deduplicated task list
+        // Build deduplicated task list (website repo already cloned in constructor)
         Map<String, RepoTask> uniqueTasks = new LinkedHashMap<>();
-        uniqueTasks.put("camel-website", new RepoTask(WEBSITE_REPO, "main", "camel-website", false));
 
         for (VersionResolver.ResolvedVersion ver : versions) {
             String camelLocal = "camel-" + ver.label();
@@ -390,11 +390,9 @@ public class ApacheCamelDomain implements DocumentDomain {
         // ── Phase 1b: Convert docs sequentially (AsciidoctorJ not thread-safe) ──
         List<ConvertedDoc> docs = new ArrayList<>();
 
-        Path websiteRepo = repoPaths.get("camel-website");
-        if (websiteRepo != null) {
-            docs.addAll(convertReleaseNotes(websiteRepo));
-            docs.addAll(collectCveFiles(websiteRepo));
-        }
+        // Website repo was already cloned in constructor for version resolution
+        docs.addAll(convertReleaseNotes(websiteRepoPath));
+        docs.addAll(collectCveFiles(websiteRepoPath));
 
         for (VersionResolver.ResolvedVersion ver : versions) {
             String label = ver.label();
@@ -491,11 +489,8 @@ public class ApacheCamelDomain implements DocumentDomain {
             List<String> runtimes = inferRuntimes(docType);
 
             try {
-                String html = adocConverter.toHtml(file, partialsDir);
-                // SectionChunker expects Markdown headings; AsciiDoc→HTML gives us HTML.
-                // We pass the HTML through the SectionChunker which works with Markdown headings.
-                // AsciidoctorJ output is HTML, so we need a simple conversion.
-                String markdown = htmlToSimpleMarkdown(html);
+                Path examplesDir = dir.getParent().resolve("examples");
+                String markdown = adocConverter.toMarkdown(file, partialsDir, examplesDir);
 
                 docs.add(new ConvertedDoc(version, baseName, docType, markdown,
                         component, runtimes, file));
@@ -713,55 +708,4 @@ public class ApacheCamelDomain implements DocumentDomain {
                 .replaceAll("^-|-$", "");
     }
 
-    /**
-     * Minimal HTML-to-Markdown conversion so SectionChunker can find headings.
-     * Converts {@code <h1>...<h6>} tags to Markdown {@code #} headings,
-     * strips remaining tags, and preserves text content.
-     */
-    static String htmlToSimpleMarkdown(String html) {
-        if (html == null || html.isEmpty()) return "";
-
-        String result = html;
-
-        // Convert heading tags to Markdown headings
-        for (int level = 1; level <= 6; level++) {
-            String hashes = "#".repeat(level);
-            result = result.replaceAll(
-                    "(?i)<h" + level + "[^>]*>(.*?)</h" + level + ">",
-                    "\n" + hashes + " $1\n");
-        }
-
-        // Convert <p> to double newline
-        result = result.replaceAll("(?i)<p[^>]*>", "\n\n");
-        result = result.replaceAll("(?i)</p>", "");
-
-        // Convert <br> to newline
-        result = result.replaceAll("(?i)<br\\s*/?>", "\n");
-
-        // Convert <li> to "- "
-        result = result.replaceAll("(?i)<li[^>]*>", "\n- ");
-
-        // Convert <code> to backticks
-        result = result.replaceAll("(?i)<code[^>]*>(.*?)</code>", "`$1`");
-
-        // Convert <a> to [text](href)
-        result = result.replaceAll(
-                "(?i)<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>", "[$2]($1)");
-
-        // Strip all remaining HTML tags
-        result = result.replaceAll("<[^>]+>", "");
-
-        // Decode common HTML entities
-        result = result.replace("&amp;", "&")
-                .replace("&lt;", "<")
-                .replace("&gt;", ">")
-                .replace("&quot;", "\"")
-                .replace("&#39;", "'")
-                .replace("&nbsp;", " ");
-
-        // Collapse excessive blank lines
-        result = result.replaceAll("\n{3,}", "\n\n");
-
-        return result.trim();
-    }
 }
