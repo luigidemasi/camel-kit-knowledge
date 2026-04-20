@@ -49,10 +49,9 @@ public class JsonPathIncludeProcessor extends IncludeProcessor {
 
     @Override
     public void process(Document document, PreprocessorReader reader, String target, Map<String, Object> attributes) {
+        StringBuilder attrDefs = new StringBuilder();
+
         try {
-            // Extract JSON relative path from target
-            // jsonpath$example$json/kafka.json    -> json/kafka.json
-            // jsonpathcount$example$json/kafka.json -> json/kafka.json
             String jsonRelPath;
             boolean isCount;
             if (target.startsWith("jsonpathcount$example$")) {
@@ -62,12 +61,10 @@ public class JsonPathIncludeProcessor extends IncludeProcessor {
                 jsonRelPath = target.substring("jsonpath$example$".length());
                 isCount = false;
             } else {
-                // Unrecognized variant — push empty and return
                 reader.pushInclude("", target, target, 1, attributes);
                 return;
             }
 
-            // Resolve the JSON file under the examples directory
             Path jsonFile = examplesDir.resolve(jsonRelPath);
             if (!Files.exists(jsonFile)) {
                 reader.pushInclude("", target, target, 1, attributes);
@@ -77,95 +74,76 @@ public class JsonPathIncludeProcessor extends IncludeProcessor {
             String jsonContent = Files.readString(jsonFile);
             JSONObject root = new JSONObject(jsonContent);
 
+            Map<String, String> resolvedAttrs = new java.util.LinkedHashMap<>();
             if (isCount) {
-                processCount(document, root, attributes);
+                collectCountAttrs(root, attributes, resolvedAttrs);
             } else {
-                processQuery(document, root, attributes);
+                collectQueryAttrs(root, attributes, resolvedAttrs);
+            }
+
+            for (var entry : resolvedAttrs.entrySet()) {
+                attrDefs.append(":").append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
             }
 
         } catch (Exception e) {
             System.err.printf("  WARN: JsonPath include failed for %s: %s%n", target, e.getMessage());
         }
 
-        // Push empty content — the include's purpose is setting attributes, not producing text
-        reader.pushInclude("", target, target, 1, attributes);
+        reader.pushInclude(attrDefs.toString(), target, target, 1, attributes);
     }
 
-    /**
-     * Process a {@code jsonpath$} include: evaluate the query and set format attributes.
-     */
-    private void processQuery(Document document, JSONObject root, Map<String, Object> attributes) {
+    private void collectQueryAttrs(JSONObject root, Map<String, Object> attributes, Map<String, String> out) {
         String query = (String) attributes.get("query");
         String formats = (String) attributes.get("formats");
-        if (query == null || formats == null) {
-            return;
-        }
+        if (query == null || formats == null) return;
 
         query = stripQuotes(query);
 
         Object result = JsonPathUtil.query(root, query);
-        if (!(result instanceof JSONObject jsonResult)) {
-            return;
-        }
+        if (!(result instanceof JSONObject jsonResult)) return;
 
         for (String format : formats.split(",")) {
             format = format.trim();
-            if (format.isEmpty()) {
-                continue;
-            }
+            if (format.isEmpty()) continue;
 
             String attrName;
             String fieldName;
 
             if (format.contains("=")) {
-                // Renamed attribute: pascalcasescheme=util.pascalCase(scheme)
                 String[] parts = format.split("=", 2);
                 attrName = parts[0].trim();
                 String expr = parts[1].trim();
                 fieldName = extractFieldFromExpression(expr);
-                if (fieldName == null) {
-                    fieldName = attrName;
-                }
+                if (fieldName == null) fieldName = attrName;
             } else {
                 attrName = format;
                 fieldName = format;
             }
 
-            String value = JsonPathUtil.extractString(jsonResult, fieldName);
-            document.setAttribute(attrName, value, true);
+            out.put(attrName, JsonPathUtil.extractString(jsonResult, fieldName));
         }
     }
 
-    /**
-     * Process a {@code jsonpathcount$} include: count nodes for each query and set attributes.
-     */
-    private void processCount(Document document, JSONObject root, Map<String, Object> attributes) {
+    private void collectCountAttrs(JSONObject root, Map<String, Object> attributes, Map<String, String> out) {
         String queries = (String) attributes.get("queries");
-        if (queries == null) {
-            return;
-        }
+        if (queries == null) return;
 
         for (String entry : splitQueries(queries)) {
             entry = entry.trim();
-            if (entry.isEmpty()) {
-                continue;
-            }
+            if (entry.isEmpty()) continue;
 
             int eq = entry.indexOf('=');
-            if (eq < 0) {
-                continue;
-            }
+            if (eq < 0) continue;
 
             String attrName = entry.substring(0, eq).trim();
             String path = entry.substring(eq + 1).trim();
 
-            // Strip "nodes" prefix — the convention is nodes$jsonpath
             if (path.startsWith("nodes")) {
                 path = path.substring("nodes".length());
             }
 
             int count = JsonPathUtil.countNodes(root, path);
-            document.setAttribute(attrName, String.valueOf(count), true);
+            out.put(attrName, String.valueOf(count));
         }
     }
 
@@ -179,7 +157,7 @@ public class JsonPathIncludeProcessor extends IncludeProcessor {
      * @param queries the raw queries attribute value
      * @return list of individual query entries
      */
-    static List<String> splitQueries(String queries) {
+    public static List<String> splitQueries(String queries) {
         List<String> result = new ArrayList<>();
         int bracketDepth = 0;
         int start = 0;
