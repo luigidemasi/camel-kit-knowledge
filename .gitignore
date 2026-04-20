@@ -71,3 +71,4 @@ indexer/src/main/resources/apache-camel/repos/
 indexer/src/main/resources/apache-camel/asciidoc-cache/
 indexer/src/main/resources/apache-camel/jira-cache/
 indexer/src/main/resources/apache-camel/cve-cache/
+indexer/src/main/resources/apache-camel/catalog-cache/

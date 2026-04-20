@@ -1,5 +1,6 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer.domain;
 
+import io.github.luigidemasi.camelkit.knowledge.indexer.CamelCatalogIndexer;
 import io.github.luigidemasi.camelkit.knowledge.indexer.GitRepoFetcher;
 import io.github.luigidemasi.camelkit.knowledge.indexer.VersionResolver;
 import io.github.luigidemasi.camelkit.knowledge.indexer.JiraFetcher;
@@ -79,6 +80,7 @@ public class ApacheCamelDomain implements DocumentDomain {
     private final AsciidocConverter adocConverter;
     private final SectionChunker sectionChunker;
     private final JiraFetcher jiraFetcher;
+    private final CamelCatalogIndexer catalogIndexer;
     private final Path reposDir;
     private final Path cveCacheDir;
     private final List<VersionResolver.ResolvedVersion> versions;
@@ -97,6 +99,10 @@ public class ApacheCamelDomain implements DocumentDomain {
 
         this.cveCacheDir = resourcesDir.resolve("apache-camel/cve-cache");
         Files.createDirectories(cveCacheDir);
+
+        Path catalogCacheDir = resourcesDir.resolve("apache-camel/catalog-cache");
+        Files.createDirectories(catalogCacheDir);
+        this.catalogIndexer = new CamelCatalogIndexer(catalogCacheDir);
 
         this.repoFetcher = new GitRepoFetcher(reposDir);
         this.adocConverter = new AsciidocConverter();
@@ -277,6 +283,14 @@ public class ApacheCamelDomain implements DocumentDomain {
         List<DocumentChunk> cveChunks = buildCveChunks(convertedDocs);
         chunks.addAll(cveChunks);
         System.out.printf("  CVE advisories: %d documents indexed%n", cveChunks.size());
+
+        // Phase 4: Index Camel Catalog metadata (component/EIP options)
+        System.out.println("Phase 4: Indexing Camel Catalog metadata...");
+        for (VersionResolver.ResolvedVersion ver : versions) {
+            List<DocumentChunk> catalogChunks = catalogIndexer.indexCatalog(ver.camelTag(), ver.label());
+            chunks.addAll(catalogChunks);
+            System.out.printf("  %s: %d catalog entries indexed%n", ver.label(), catalogChunks.size());
+        }
 
         return chunks;
     }
@@ -461,6 +475,9 @@ public class ApacheCamelDomain implements DocumentDomain {
         List<ConvertedDoc> docs = new ArrayList<>();
         List<Path> adocFiles = repoFetcher.listFiles(dir, "*.adoc");
 
+        // Antora partials dir is a sibling of the pages dir
+        Path partialsDir = dir.getParent().resolve("partials");
+
         for (Path file : adocFiles) {
             String fileName = file.getFileName().toString();
 
@@ -474,7 +491,7 @@ public class ApacheCamelDomain implements DocumentDomain {
             List<String> runtimes = inferRuntimes(docType);
 
             try {
-                String html = adocConverter.toHtml(file);
+                String html = adocConverter.toHtml(file, partialsDir);
                 // SectionChunker expects Markdown headings; AsciiDoc→HTML gives us HTML.
                 // We pass the HTML through the SectionChunker which works with Markdown headings.
                 // AsciidoctorJ output is HTML, so we need a simple conversion.
