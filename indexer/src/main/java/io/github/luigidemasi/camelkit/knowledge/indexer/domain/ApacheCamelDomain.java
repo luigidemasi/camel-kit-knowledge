@@ -1,6 +1,7 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer.domain;
 
 import io.github.luigidemasi.camelkit.knowledge.indexer.GitRepoFetcher;
+import io.github.luigidemasi.camelkit.knowledge.indexer.VersionResolver;
 import io.github.luigidemasi.camelkit.knowledge.indexer.JiraFetcher;
 import io.github.luigidemasi.camelkit.knowledge.indexer.chunker.ReleaseNotesChunker;
 import io.github.luigidemasi.camelkit.knowledge.indexer.chunker.ReleaseNotesChunker.ResolvedIssue;
@@ -46,19 +47,7 @@ import java.util.regex.Pattern;
  */
 public class ApacheCamelDomain implements DocumentDomain {
 
-    // ── Version matrix ──────────────────────────────────────────────────
-    //
-    // Each version specifies branches for the three main repos.
-    // Null branch means "skip this repo for that version."
-    record VersionSpec(String label, String camelBranch,
-                       String quarkusBranch, String springBootBranch) {}
-
-    static final List<VersionSpec> VERSIONS = List.of(
-            new VersionSpec("4.10", "camel-4.10.x", "3.27.x", "4.10.x"),
-            new VersionSpec("4.14", "camel-4.14.x", "3.27.x", "4.14.x"),
-            new VersionSpec("4.18", "camel-4.18.x", "3.33.x", "4.18.x"),
-            new VersionSpec("4.19", "camel-4.19.0", null, null)
-    );
+    // ── Resolved version matrix (populated dynamically in constructor) ──
 
     // ── Repo URLs ───────────────────────────────────────────────────────
 
@@ -71,8 +60,6 @@ public class ApacheCamelDomain implements DocumentDomain {
 
     private static final Pattern RELEASE_VERSION_PATTERN =
             Pattern.compile("release-(\\d+)\\.(\\d+)");
-
-    private static final double MIN_RELEASE_VERSION = 4.10;
 
     // ── Component name extraction ───────────────────────────────────────
 
@@ -94,6 +81,8 @@ public class ApacheCamelDomain implements DocumentDomain {
     private final JiraFetcher jiraFetcher;
     private final Path reposDir;
     private final Path cveCacheDir;
+    private final List<VersionResolver.ResolvedVersion> versions;
+    private final double minReleaseVersion;
 
     /**
      * @param cacheDir     reserved for future caching (not used directly)
@@ -113,6 +102,24 @@ public class ApacheCamelDomain implements DocumentDomain {
         this.adocConverter = new AsciidocConverter();
         this.sectionChunker = new SectionChunker();
         this.jiraFetcher = new JiraFetcher(jiraCacheDir);
+
+        // Clone website repo first (needed for version resolution)
+        try {
+            Path websiteRepo = repoFetcher.fetchRepo(WEBSITE_REPO, "main", "camel-website");
+            this.versions = VersionResolver.resolveVersions(websiteRepo);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Version resolution interrupted", e);
+        }
+
+        // Minimum release version for release notes filtering = oldest active version
+        this.minReleaseVersion = versions.stream()
+                .mapToDouble(v -> {
+                    String[] parts = v.label().split("\\.");
+                    return Integer.parseInt(parts[0]) + Integer.parseInt(parts[1]) / 100.0;
+                })
+                .min()
+                .orElse(4.10);
     }
 
     @Override
@@ -300,22 +307,31 @@ public class ApacheCamelDomain implements DocumentDomain {
      * (AsciidoctorJ is not thread-safe — single JRuby runtime).
      */
     private List<ConvertedDoc> fetchAndConvertAll() throws IOException {
-        // ── Phase 1a: Download all repos in parallel ──
-        record RepoTask(String url, String ref, String localName) {}
+        record RepoTask(String url, String ref, String localName, boolean isTag) {}
 
-        List<RepoTask> tasks = new ArrayList<>();
-        tasks.add(new RepoTask(WEBSITE_REPO, "main", "camel-website"));
+        // Build deduplicated task list
+        Map<String, RepoTask> uniqueTasks = new LinkedHashMap<>();
+        uniqueTasks.put("camel-website", new RepoTask(WEBSITE_REPO, "main", "camel-website", false));
 
-        for (VersionSpec ver : VERSIONS) {
-            tasks.add(new RepoTask(CAMEL_REPO, ver.camelBranch(), "camel-" + ver.camelBranch()));
-            if (ver.quarkusBranch() != null) {
-                tasks.add(new RepoTask(QUARKUS_REPO, ver.quarkusBranch(), "camel-quarkus-" + ver.quarkusBranch()));
+        for (VersionResolver.ResolvedVersion ver : versions) {
+            String camelLocal = "camel-" + ver.label();
+            uniqueTasks.putIfAbsent(camelLocal,
+                    new RepoTask(CAMEL_REPO, ver.camelTag(), camelLocal, true));
+
+            if (ver.quarkusTag() != null) {
+                String quarkusLocal = "quarkus-" + ver.quarkusTag();
+                uniqueTasks.putIfAbsent(quarkusLocal,
+                        new RepoTask(QUARKUS_REPO, ver.quarkusTag(), quarkusLocal, true));
             }
-            if (ver.springBootBranch() != null) {
-                tasks.add(new RepoTask(SPRING_REPO, ver.springBootBranch(), "camel-spring-boot-" + ver.springBootBranch()));
+
+            if (ver.springBootTag() != null) {
+                String sbLocal = "spring-boot-" + ver.label();
+                uniqueTasks.putIfAbsent(sbLocal,
+                        new RepoTask(SPRING_REPO, ver.springBootTag(), sbLocal, true));
             }
         }
 
+        List<RepoTask> tasks = new ArrayList<>(uniqueTasks.values());
         int parallelism = Integer.parseInt(System.getProperty("download.parallelism", "4"));
         System.out.printf("  Downloading %d repos (%d parallel)...%n", tasks.size(), parallelism);
         System.out.flush();
@@ -328,7 +344,8 @@ public class ApacheCamelDomain implements DocumentDomain {
         for (RepoTask task : tasks) {
             pool.submit(() -> {
                 try {
-                    Path path = repoFetcher.fetchRepo(task.url(), task.ref(), task.localName());
+                    Path path = repoFetcher.fetchRepo(
+                            task.url(), task.ref(), task.localName(), task.isTag());
                     repoPaths.put(task.localName(), path);
                 } catch (IOException e) {
                     synchronized (errors) {
@@ -365,23 +382,23 @@ public class ApacheCamelDomain implements DocumentDomain {
             docs.addAll(collectCveFiles(websiteRepo));
         }
 
-        for (VersionSpec ver : VERSIONS) {
+        for (VersionResolver.ResolvedVersion ver : versions) {
             String label = ver.label();
 
-            Path camelRepo = repoPaths.get("camel-" + ver.camelBranch());
+            Path camelRepo = repoPaths.get("camel-" + label);
             if (camelRepo != null) {
                 docs.addAll(convertCamelDocs(camelRepo, label));
             }
 
-            if (ver.quarkusBranch() != null) {
-                Path quarkusRepo = repoPaths.get("camel-quarkus-" + ver.quarkusBranch());
+            if (ver.quarkusTag() != null) {
+                Path quarkusRepo = repoPaths.get("quarkus-" + ver.quarkusTag());
                 if (quarkusRepo != null) {
                     docs.addAll(convertQuarkusDocs(quarkusRepo, label));
                 }
             }
 
-            if (ver.springBootBranch() != null) {
-                Path springBootRepo = repoPaths.get("camel-spring-boot-" + ver.springBootBranch());
+            if (ver.springBootTag() != null) {
+                Path springBootRepo = repoPaths.get("spring-boot-" + label);
                 if (springBootRepo != null) {
                     docs.addAll(convertSpringBootDocs(springBootRepo, label));
                 }
@@ -491,7 +508,7 @@ public class ApacheCamelDomain implements DocumentDomain {
             int major = Integer.parseInt(m.group(1));
             int minor = Integer.parseInt(m.group(2));
             double ver = major + minor / 100.0;
-            if (ver < MIN_RELEASE_VERSION) continue;
+            if (ver < minReleaseVersion) continue;
 
             String versionLabel = major + "." + minor;
             String markdown = Files.readString(file);
