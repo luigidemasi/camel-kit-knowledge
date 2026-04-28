@@ -246,33 +246,62 @@ public class CamelCatalogIndexer {
      * @return path to the downloaded JAR
      */
     private Path downloadCatalogJar(String version) throws IOException, InterruptedException {
-        String jarName = "camel-catalog-" + version + ".jar";
-        Path jarPath = cacheDir.resolve(jarName);
-
-        if (Files.exists(jarPath)) {
-            System.out.printf("Using cached %s%n", jarName);
-            return jarPath;
+        String[] parts = version.split("\\.");
+        if (parts.length != 3) {
+            throw new IOException("Invalid version format: " + version);
         }
 
-        String url = String.format(MAVEN_CENTRAL_URL, version, version);
-        System.out.printf("Downloading %s...%n", jarName);
+        int major = Integer.parseInt(parts[0]);
+        int minor = Integer.parseInt(parts[1]);
+        int patch = Integer.parseInt(parts[2]);
 
         HttpClient client = HttpClient.newHttpClient();
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .GET()
-                .build();
 
-        HttpResponse<Path> response = client.send(request,
-                HttpResponse.BodyHandlers.ofFile(jarPath));
+        for (int p = patch; p >= 0; p--) {
+            String tryVersion = major + "." + minor + "." + p;
+            String jarName = "camel-catalog-" + tryVersion + ".jar";
+            Path jarPath = cacheDir.resolve(jarName);
 
-        if (response.statusCode() != 200) {
-            Files.deleteIfExists(jarPath);
-            throw new IOException("Failed to download " + jarName +
-                    ": HTTP " + response.statusCode());
+            if (Files.exists(jarPath)) {
+                if (p != patch) {
+                    System.out.printf("  Using cached %s (latest available for %s)%n", jarName, version);
+                } else {
+                    System.out.printf("  Using cached %s%n", jarName);
+                }
+                return jarPath;
+            }
+
+            String url = String.format(MAVEN_CENTRAL_URL, tryVersion, tryVersion);
+
+            // HEAD request first to check availability without downloading
+            HttpRequest headRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                    .build();
+
+            HttpResponse<Void> headResponse = client.send(headRequest,
+                    HttpResponse.BodyHandlers.discarding());
+
+            if (headResponse.statusCode() == 200) {
+                System.out.printf("  Downloading %s%s...%n", jarName,
+                        p != patch ? " (latest available for " + version + ")" : "");
+
+                HttpRequest getRequest = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .GET()
+                        .build();
+
+                HttpResponse<Path> response = client.send(getRequest,
+                        HttpResponse.BodyHandlers.ofFile(jarPath));
+
+                if (response.statusCode() == 200) {
+                    return jarPath;
+                }
+                Files.deleteIfExists(jarPath);
+            }
         }
 
-        return jarPath;
+        throw new IOException("No camel-catalog JAR available for " + major + "." + minor + ".x on Maven Central");
     }
 
     /**

@@ -87,7 +87,6 @@
                          at index-build time (via exec:java which uses the filesystem),
                          not as a dependency. -->
                     <excludes>
-                        <exclude>rh-build-camel/**</exclude>
                         <exclude>camel-migration/**</exclude>
                     </excludes>
                 </configuration>

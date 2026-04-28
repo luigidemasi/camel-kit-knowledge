@@ -1,5 +1,6 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -8,6 +9,7 @@ import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@Disabled("Requires network access to GitHub")
 class DocumentFetcherTest {
 
     @TempDir

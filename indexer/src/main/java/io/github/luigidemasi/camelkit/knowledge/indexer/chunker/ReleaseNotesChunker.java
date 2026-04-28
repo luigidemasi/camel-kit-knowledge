@@ -10,10 +10,10 @@ import java.util.regex.Pattern;
  * Splits JIRA issue rows from markdown tables into individual chunks,
  * while falling back to SectionChunker for non-table sections.
  *
- * Recognizes JIRA issue patterns: CEQ-*, CSB-*, RHBAC-*, CAMEL-*, ENTESB-*
+ * Recognizes JIRA issue patterns (e.g. CAMEL-*)
  * in markdown table rows like:
  * <pre>
- * | [CSB-8351](https://issues.redhat.com/browse/CSB-8351) | description |
+ * | [CAMEL-22784](https://issues.apache.org/jira/browse/CAMEL-22784) | description |
  * </pre>
  */
 public class ReleaseNotesChunker {
@@ -23,7 +23,7 @@ public class ReleaseNotesChunker {
 
     private static final Pattern JIRA_ROW_PATTERN = Pattern.compile(
             "^\\|\\s*(?:\\d+\\s*\\|)?\\s*\\[(" +
-                    "(?:CEQ|CSB|RHBAC|CAMEL|ENTESB)-\\d+" +
+                    "(?:CAMEL)-\\d+" +
                     ")\\]\\(([^)]+)\\)\\s*\\|\\s*(.+?)\\s*\\|\\s*$",
             Pattern.MULTILINE);
 

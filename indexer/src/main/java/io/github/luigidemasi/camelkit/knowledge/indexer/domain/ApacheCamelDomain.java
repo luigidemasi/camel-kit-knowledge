@@ -288,9 +288,13 @@ public class ApacheCamelDomain implements DocumentDomain {
         // Phase 4: Index Camel Catalog metadata (component/EIP options)
         System.out.println("Phase 4: Indexing Camel Catalog metadata...");
         for (VersionResolver.ResolvedVersion ver : versions) {
-            List<DocumentChunk> catalogChunks = catalogIndexer.indexCatalog(ver.camelTag(), ver.label());
-            chunks.addAll(catalogChunks);
-            System.out.printf("  %s: %d catalog entries indexed%n", ver.label(), catalogChunks.size());
+            try {
+                List<DocumentChunk> catalogChunks = catalogIndexer.indexCatalog(ver.camelTag(), ver.label());
+                chunks.addAll(catalogChunks);
+                System.out.printf("  %s: %d catalog entries indexed%n", ver.label(), catalogChunks.size());
+            } catch (IOException e) {
+                System.out.printf("  WARN: %s: catalog not available (%s)%n", ver.label(), e.getMessage());
+            }
         }
 
         return chunks;
@@ -616,8 +620,8 @@ public class ApacheCamelDomain implements DocumentDomain {
                         content.toString(),
                         null,
                         cve.jiraIds().isEmpty() ? null : cve.jiraIds(),
-                        null,       // erratumId (Red Hat concept)
-                        null,       // advisoryType (Red Hat concept)
+                        null,       // erratumId
+                        null,       // advisoryType
                         cve.severity(),
                         List.of(cve.cveId()),
                         cve.fixedVersions().isEmpty() ? null : cve.fixedVersions()

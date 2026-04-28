@@ -1,6 +1,6 @@
 # Camel Kit Knowledge
 
-Knowledge layer for [camel-kit](https://github.com/luigidemasi/camel-kit) — semantic search over Red Hat Build of Apache Camel documentation, KB articles, errata, and CVEs.
+Knowledge layer for [camel-kit](https://github.com/luigidemasi/camel-kit) -- semantic search over Apache Camel documentation, release notes, CVE advisories, and component metadata.
 
 ## Modules
 
@@ -8,7 +8,7 @@ Knowledge layer for [camel-kit](https://github.com/luigidemasi/camel-kit) — se
 |--------|-------------|
 | **schema** | Shared Lucene field constants and `KnowledgeDocument` builder |
 | **embedding** | ONNX-based embedding provider (Granite Embedding Small English R2, 384-dim, Q8) |
-| **indexer** | Document ingestion pipeline — HTML guides, KB articles, errata, CVEs via Docling |
+| **indexer** | Document ingestion pipeline -- Git repos, AsciiDoc conversion, Camel Catalog JARs |
 | **index** | Pre-built Lucene index artifact (independently versioned via `${revision}`) |
 | **mcp** | Quarkus MCP server exposing search tools to AI agents |
 
@@ -16,113 +16,66 @@ Knowledge layer for [camel-kit](https://github.com/luigidemasi/camel-kit) — se
 
 - Java 17+
 - Maven 3.9+
-- Docker (only for rebuilding the index — runs [Docling](https://github.com/docling-project/docling-serve) container)
+
+No Docker. No Docling. No external tokens.
+
+## Data Sources
+
+| Source | Content | Format |
+|--------|---------|--------|
+| `apache/camel` | Component docs, EIP patterns, user manual | AsciiDoc |
+| `apache/camel-website` | Release notes, CVE advisories | Markdown (YAML frontmatter) |
+| `apache/camel-quarkus` | Quarkus extension docs | AsciiDoc |
+| `apache/camel-spring-boot` | Spring Boot starter docs | AsciiDoc |
+| Camel Catalog JAR | Component/EIP option metadata (properties, types, defaults) | JSON |
+
+## Dynamic Version Resolution
+
+Versions are discovered at build time -- nothing is hardcoded.
+
+1. **Active versions** -- the indexer clones `apache/camel-website` and parses release frontmatter (`content/releases/release-*.md`) to find active LTS versions (where `eol > today`) and the latest non-LTS release
+2. **Release tags** -- latest release tags are resolved via `git ls-remote` (JGit) for `camel`, `camel-spring-boot`, and `camel-quarkus`
+3. **Quarkus-to-Camel mapping** -- resolved by fetching each Quarkus release tag's `pom.xml` from GitHub and reading the `camel.major.minor` property
+4. **Tag-aware cloning** -- repos are cloned at immutable release tags (not moving branches). `.fetched-tag` marker files enable cache reuse between builds
+
+## AsciiDoc Conversion
+
+Component documentation is converted directly from AsciiDoc to Markdown via a custom AsciidoctorJ converter (`MarkdownConverter`). No HTML intermediate, no Docling container.
+
+- Antora `partial$` includes resolved by inlining partial files with attribute substitution
+- Antora `jsonpath$` / `jsonpathcount$` extensions reimplemented in Java (`JsonPathIncludeProcessor`, pre-processing pipeline)
+- `jsonpathTable::` block macros render option tables from component JSON data
+- Component docs render with real data (e.g. "The Kafka component supports 127 options")
+
+## Camel Catalog Integration
+
+`CamelCatalogIndexer` downloads the `camel-catalog` JAR from Maven Central for each active version, extracts component and EIP JSON metadata, and creates document chunks with structured option data (properties, types, defaults, descriptions). If the exact version JAR is not on Maven Central (unreleased), it falls back to previous patch versions.
 
 ## Build
+
+### Normal build (uses pre-built index)
 
 ```bash
 mvn clean install
 ```
 
-This builds all modules using the **pre-built index** shipped in `index/src/main/resources/knowledge-index/`.
-
 The MCP module downloads the ONNX embedding model from HuggingFace during `generate-resources` (skipped if already cached).
 
-## Rebuilding the Index
-
-The pre-built index covers 5 product versions of Red Hat Build of Apache Camel (4.0, 4.4, 4.8, 4.10, 4.14) with HTML guides, KB articles, errata, and CVEs. To rebuild it from source documents:
-
-### 1. Start the Docling container
-
-The indexer uses [docling-serve](https://github.com/docling-project/docling-serve) to convert HTML documentation to Markdown.
-
-```bash
-docker run -d --name camel-kit-docling -p 5001:5001 quay.io/docling-project/docling-serve:latest
-```
-
-Wait for it to be ready:
-
-```bash
-curl -sf http://localhost:5001/health
-```
-
-If Docling is running on a different host or port, set the URL:
-
-```bash
-export DOCLING_URL="http://myhost:5001"
-```
-
-### 2. Set up JIRA access (optional)
-
-The indexer enriches errata with linked JIRA issue details. Apache JIRA (CAMEL-\* issues) is public, but Red Hat JIRA (CEQ-\*, ENTESB-\*, etc.) requires a Personal Access Token:
-
-```bash
-export JIRA_RH_TOKEN="your_red_hat_jira_pat"
-```
-
-Or pass it as a system property:
-
-```bash
--Djira.rh.token="your_red_hat_jira_pat"
-```
-
-Without the token, Red Hat JIRA issues are silently skipped — the index still builds, just without those enrichments.
-
-### 3. Download KB articles (requires Red Hat subscription)
-
-KB articles on access.redhat.com are subscriber-only. A script automates discovery and download using an offline token:
-
-```bash
-# Generate a token at https://access.redhat.com/management/api
-export RH_OFFLINE_TOKEN="your_offline_token"
-
-cd indexer
-./scripts/download-kb-articles.sh
-```
-
-The script discovers Camel/Fuse KB articles via the Hydra API, authenticates via Red Hat SSO, and downloads HTML to `indexer/src/main/resources/rh-build-camel/kb-articles/`. It is idempotent (skips already-downloaded files); use `--force` to re-download all.
-
-If KB articles are missing, the indexer skips them with a warning — the index still builds without KB content.
-
-### 4. Run the indexer
+### Rebuild index from source
 
 ```bash
 mvn clean install -pl index -Prebuild-index -Drevision=$(date +%Y%m%d%H%M) -am
 ```
 
-To tune JIRA parallel fetching (default 4 threads):
-
-```bash
-mvn clean install -pl index -Prebuild-index -Drevision=$(date +%Y%m%d%H%M) \
-    -Djira.parallelism=8 -am
-```
-
 This will:
-- Download the ONNX embedding model (~52 MB)
-- Fetch errata from the Red Hat Hydra API (public, no auth required)
-- Fetch CVE details for Security Advisories (public Hydra CVE endpoint)
-- Enrich errata with linked JIRA issues (optional, requires `JIRA_RH_TOKEN` for Red Hat issues)
-- Parse all documents from `indexer/src/main/resources/rh-build-camel/`
-- Generate embeddings for each chunk (384-dim vectors)
-- Write the Lucene index to `index/src/main/resources/knowledge-index/`
-- Package and install the index JAR with a timestamp version
-
-All fetched data (errata JSON, CVE JSON, JIRA responses) is cached locally under `indexer/src/main/resources/rh-build-camel/` — subsequent rebuilds skip already-cached items.
-
-### 5. Stop Docling
-
-```bash
-docker rm -f camel-kit-docling
-```
-
-### Index contents
-
-The indexer processes:
-- **HTML guides** — downloaded from docs.redhat.com, cached in `indexer/src/main/resources/rh-build-camel/{version}/`
-- **KB articles** — Red Hat Knowledgebase articles from `indexer/src/main/resources/rh-build-camel/kb-articles/`
-- **Errata** — fetched from Red Hat Hydra API (public), cached as JSON in `indexer/src/main/resources/rh-build-camel/errata/`
-- **CVEs** — enriched with CVSS scores, CWE IDs, and affected packages from `indexer/src/main/resources/rh-build-camel/errata/cves/`
-- **JIRA issues** — linked from errata, cached in `indexer/src/main/resources/rh-build-camel/jira-cache/`
+1. Clone/update Git repos at latest release tags
+2. Render AsciiDoc to Markdown with resolved option tables
+3. Download Camel Catalog JARs for structured option data
+4. Parse release notes and CVE advisories
+5. Enrich release notes with Apache JIRA issue details (public, no auth required)
+6. Generate embeddings (384-dim vectors)
+7. Write Lucene index to `index/src/main/resources/knowledge-index/`
+8. Package and install the index JAR with a timestamp version
 
 ## Running the MCP Server
 
@@ -141,36 +94,51 @@ The MCP server resolves the index JAR from Maven repositories at startup. To pin
 knowledge.index.version=202603131454
 ```
 
+## MCP Tools
+
+5 tools with `camel_docs_*` prefix:
+
+| Tool | Description |
+|------|-------------|
+| `camel_docs_search` | General hybrid search across all documentation |
+| `camel_docs_component_info` | Component lookup with usage, options, and related CVEs |
+| `camel_docs_cve_search` | CVE search by ID, component, severity, or version |
+| `camel_docs_release_info` | Release notes by version |
+| `camel_docs_jira_lookup` | CAMEL-* JIRA issue details and fix version |
+
 ## Search Architecture
 
-The MCP server uses **hybrid search** combining:
-- **BM25 text search** (20% weight) — keyword matching via Lucene's standard analyzer
-- **Vector search** (80% weight) — semantic similarity via KNN float vectors (384-dim Granite embeddings)
+**Hybrid search** combining:
+- **BM25 text search** (20% weight) -- keyword matching via Lucene's standard analyzer
+- **Vector search** (80% weight) -- semantic similarity via KNN float vectors (384-dim Granite embeddings)
 
-Component lookups (`lookupComponent`) use pure BM25 for exact matching.
+Component lookups (`camel_docs_component_info`) use pure BM25 for exact matching.
 
-## Indexer Configuration Reference
+## Configuration Reference
 
-### Download scripts
+### System properties
 
-| Script | Purpose | Auth |
-|--------|---------|------|
-| `indexer/scripts/download-kb-articles.sh` | Download subscriber-only KB articles | `RH_OFFLINE_TOKEN` (required) |
-| `indexer/scripts/download-rh-docs.sh` | Download HTML guides from docs.redhat.com | None (public) |
+| Property | Purpose | Default |
+|----------|---------|---------|
+| `-Djira.parallelism` | JIRA fetch thread pool size | `4` |
+| `-Ddownload.parallelism` | Git repo download thread pool size | `4` |
 
-### Environment variables and system properties
+### MCP application properties
 
-| Variable | Type | Purpose | Required | Default |
-|----------|------|---------|----------|---------|
-| `RH_OFFLINE_TOKEN` | env | Red Hat SSO offline token for KB article download | For KB articles | None |
-| `DOCLING_URL` / `-Ddocling.url` | env / sys prop | Docling service URL | For index rebuild | `http://localhost:5001` |
-| `JIRA_RH_TOKEN` / `-Djira.rh.token` | env / sys prop | Bearer token for Red Hat JIRA | No | None (RH issues skipped) |
-| `-Djira.parallelism` | sys prop | JIRA fetch thread pool size | No | `4` |
-| `-Ddocling.parallelism` | sys prop | Docling conversion thread pool size | No | `4` |
-| `-Ddocling.retries` | sys prop | Max retry attempts for Docling | No | `3` |
-| `-Ddocling.timeout.minutes` | sys prop | HTTP timeout for Docling requests | No | `10` |
+| Property | Purpose | Default |
+|----------|---------|---------|
+| `knowledge.index.version` | Pin a specific index JAR version | latest SNAPSHOT |
+| `knowledge.index.group-id` | Index artifact group ID | `io.github.luigidemasi` |
+| `knowledge.index.artifact-id` | Index artifact ID | `camel-kit-knowledge-index` |
 
-Errata, CVEs (Hydra API), HTML guides (docs.redhat.com), and Apache JIRA are all public. KB articles require a Red Hat subscription (`RH_OFFLINE_TOKEN`). Red Hat JIRA requires a PAT (`JIRA_RH_TOKEN`).
+### Cache locations (gitignored)
+
+| Path | Contents |
+|------|----------|
+| `indexer/src/main/resources/apache-camel/repos/` | Cloned Git repositories |
+| `indexer/src/main/resources/apache-camel/catalog-cache/` | Downloaded Camel Catalog JARs |
+
+Apache JIRA (CAMEL-* issues) is public and requires no authentication.
 
 ## License
 

@@ -13,44 +13,30 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
+import java.util.Set;
 
 /**
- * Fetches JIRA issue details from Apache and Red Hat JIRA instances.
+ * Fetches JIRA issue details from Apache JIRA.
  * Results are cached as JSON files to avoid re-fetching on every indexer run.
  *
  * <p>Routing by prefix:
  * <ul>
- *   <li>CAMEL-* → issues.apache.org (public, no auth)</li>
- *   <li>CEQ-*, CSB-*, RHBAC-*, ENTESB-* → issues.redhat.com (bearer token)</li>
+ *   <li>CAMEL-* -> issues.apache.org (public, no auth)</li>
  * </ul>
- *
- * <p>Set the Red Hat token via environment variable {@code JIRA_RH_TOKEN}
- * or system property {@code jira.rh.token}.
  */
 public class JiraFetcher {
 
     private static final String APACHE_JIRA_URL = "https://issues.apache.org/jira/rest/api/2/issue/";
-    private static final String REDHAT_JIRA_URL = "https://issues.redhat.com/rest/api/2/issue/";
     private static final String FIELDS = "summary,description,fixVersions,components,status,priority,labels,issuetype,resolution";
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
     private static final int MAX_RETRIES = 10;
     private static final long INITIAL_BACKOFF_MS = 2000;
     private static final long MAX_BACKOFF_MS = 60_000;
 
-    private static final Map<String, JiraInstance> PREFIX_MAP = Map.of(
-            "CAMEL", JiraInstance.APACHE,
-            "CEQ", JiraInstance.REDHAT,
-            "CSB", JiraInstance.REDHAT,
-            "RHBAC", JiraInstance.REDHAT,
-            "ENTESB", JiraInstance.REDHAT
-    );
-
-    private enum JiraInstance { APACHE, REDHAT }
+    private static final Set<String> KNOWN_PREFIXES = Set.of("CAMEL");
 
     private final HttpClient httpClient;
     private final Path cacheDir;
-    private final String rhToken;
 
     public JiraFetcher(Path cacheDir) {
         this.httpClient = HttpClient.newBuilder()
@@ -58,7 +44,6 @@ public class JiraFetcher {
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
         this.cacheDir = cacheDir;
-        this.rhToken = resolveRhToken();
     }
 
     /**
@@ -138,31 +123,19 @@ public class JiraFetcher {
         String prefix = jiraId.contains("-") ? jiraId.substring(0, jiraId.indexOf('-')) : null;
         if (prefix == null) return null;
 
-        JiraInstance instance = PREFIX_MAP.get(prefix);
-        if (instance == null) {
-            System.out.printf("  WARN: Unknown JIRA prefix: %s%n", prefix);
+        if (!KNOWN_PREFIXES.contains(prefix)) {
+            System.out.printf("  WARN: Unknown JIRA prefix: %s (skipping)%n", prefix);
             return null;
         }
 
-        String baseUrl = instance == JiraInstance.APACHE ? APACHE_JIRA_URL : REDHAT_JIRA_URL;
-        String url = baseUrl + jiraId + "?fields=" + FIELDS;
+        String url = APACHE_JIRA_URL + jiraId + "?fields=" + FIELDS;
 
-        if (instance == JiraInstance.REDHAT && rhToken == null) {
-            // No token — skip Red Hat JIRA silently
-            return null;
-        }
-
-        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
+        HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .header("Accept", "application/json")
                 .timeout(REQUEST_TIMEOUT)
-                .GET();
-
-        if (instance == JiraInstance.REDHAT) {
-            requestBuilder.header("Authorization", "Bearer " + rhToken);
-        }
-
-        HttpRequest request = requestBuilder.build();
+                .GET()
+                .build();
 
         for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             try {
@@ -191,10 +164,6 @@ public class JiraFetcher {
                     return null;
                 } else if (response.statusCode() == 404) {
                     System.out.printf("  WARN: JIRA %s not found (404)%n", jiraId);
-                    return null;
-                } else if (response.statusCode() == 401 || response.statusCode() == 403) {
-                    System.out.printf("  WARN: JIRA %s auth failed (%d) — check JIRA_RH_TOKEN%n",
-                            jiraId, response.statusCode());
                     return null;
                 } else {
                     System.out.printf("  WARN: JIRA %s returned HTTP %d%n", jiraId, response.statusCode());
@@ -263,15 +232,4 @@ public class JiraFetcher {
         }
     }
 
-    private static String resolveRhToken() {
-        String token = System.getProperty("jira.rh.token");
-        if (token != null && !token.isBlank()) return token;
-        token = System.getenv("JIRA_RH_TOKEN");
-        if (token != null && !token.isBlank()) return token;
-        return null;
-    }
-
-    public boolean hasRhToken() {
-        return rhToken != null;
-    }
 }

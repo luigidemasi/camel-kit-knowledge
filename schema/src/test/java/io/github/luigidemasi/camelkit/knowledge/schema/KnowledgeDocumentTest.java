@@ -9,8 +9,8 @@ class KnowledgeDocumentTest {
 
     @Test
     void buildMigrationDocument() {
-        Document doc = new KnowledgeDocument("test-id", "rh_build_camel")
-                .source("red-hat-build-camel")
+        Document doc = new KnowledgeDocument("test-id", "apache_camel")
+                .source("apache-camel")
                 .docType("guide")
                 .sourceVersion("4.14")
                 .component("camel-kafka")
@@ -19,8 +19,8 @@ class KnowledgeDocumentTest {
                 .build();
 
         assertEquals("test-id", doc.get(KnowledgeFields.ID));
-        assertEquals("rh_build_camel", doc.get(KnowledgeFields.DOMAIN));
-        assertEquals("red-hat-build-camel", doc.get(KnowledgeFields.SOURCE));
+        assertEquals("apache_camel", doc.get(KnowledgeFields.DOMAIN));
+        assertEquals("apache-camel", doc.get(KnowledgeFields.SOURCE));
         assertEquals("guide", doc.get(KnowledgeFields.DOC_TYPE));
         assertEquals("4.14", doc.get(KnowledgeFields.SOURCE_VERSION));
         assertNull(doc.get(KnowledgeFields.TARGET_VERSION));
@@ -32,13 +32,13 @@ class KnowledgeDocumentTest {
     @Test
     void domainMetadataMigrationFactory() {
         DomainMetadata meta = DomainMetadata.migration(
-                "rh_fuse_migration",
-                "camel_rh_fuse_migration",
-                "Search Red Hat Fuse migration docs"
+                "apache_camel_migration",
+                "camel_migration",
+                "Search Apache Camel migration docs"
         );
 
-        assertEquals("rh_fuse_migration", meta.domainId());
-        assertEquals("camel_rh_fuse_migration", meta.toolName());
+        assertEquals("apache_camel_migration", meta.domainId());
+        assertEquals("camel_migration", meta.toolName());
         assertTrue(meta.hasComponentField());
         assertTrue(meta.hasVersionFields());
     }

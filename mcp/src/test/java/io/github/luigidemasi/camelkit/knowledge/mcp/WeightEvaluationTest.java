@@ -23,7 +23,7 @@ import java.util.List;
  * </ol>
  *
  * <h3>When to re-run the dump</h3>
- * <p>Document IDs are deterministic ({@code rh-build-camel-{version}-{shortName}-{chunkIndex}}),
+ * <p>Document IDs are deterministic ({@code apache-camel-{version}-{shortName}-{chunkIndex}}),
  * so they only change when source documents are added/removed or chunking logic changes.
  * After such changes, re-run {@code dumpSearchResults} and update the expected IDs.</p>
  */
@@ -137,7 +137,7 @@ class WeightEvaluationTest {
             for (WeightConfig wc : configs) {
                 List<LuceneSearchService.SearchResult> searchResults =
                         LuceneSearchService.hybridSearch(searcher, embeddingProvider,
-                                "rh_build_camel", eq.query(), null, null, 5,
+                                "apache_camel", eq.query(), null, null, 5,
                                 wc.bm25Weight(), wc.vectorWeight());
 
                 sb.append(String.format("  %-15s:%n", wc.label()));
@@ -192,7 +192,7 @@ class WeightEvaluationTest {
                 WeightConfig wc = configs.get(ci);
                 List<LuceneSearchService.SearchResult> searchResults =
                         LuceneSearchService.hybridSearch(searcher, embeddingProvider,
-                                "rh_build_camel", eq.query(), null, null, 10,
+                                "apache_camel", eq.query(), null, null, 10,
                                 wc.bm25Weight(), wc.vectorWeight());
 
                 int rank = 0;

@@ -272,7 +272,7 @@ public class LuceneSearchService {
      */
     public List<ErrataSearchResult> searchByCve(String cveId) throws IOException {
         BooleanQuery query = new BooleanQuery.Builder()
-                .add(new TermQuery(new Term(KnowledgeFields.DOMAIN, "rh_build_camel")), BooleanClause.Occur.MUST)
+                .add(new TermQuery(new Term(KnowledgeFields.DOMAIN, "apache_camel")), BooleanClause.Occur.MUST)
                 .add(new TermQuery(new Term(KnowledgeFields.DOC_TYPE, "errata")), BooleanClause.Occur.MUST)
                 .add(new TermQuery(new Term(KnowledgeFields.CVE_IDS, cveId)), BooleanClause.Occur.MUST)
                 .build();
@@ -288,7 +288,7 @@ public class LuceneSearchService {
             throws IOException, ParseException {
 
         BooleanQuery.Builder qb = new BooleanQuery.Builder()
-                .add(new TermQuery(new Term(KnowledgeFields.DOMAIN, "rh_build_camel")), BooleanClause.Occur.MUST)
+                .add(new TermQuery(new Term(KnowledgeFields.DOMAIN, "apache_camel")), BooleanClause.Occur.MUST)
                 .add(new TermQuery(new Term(KnowledgeFields.DOC_TYPE, "errata")), BooleanClause.Occur.MUST);
 
         if (advisoryType != null) {
@@ -315,7 +315,7 @@ public class LuceneSearchService {
             throws IOException {
 
         BooleanQuery.Builder qb = new BooleanQuery.Builder()
-                .add(new TermQuery(new Term(KnowledgeFields.DOMAIN, "rh_build_camel")), BooleanClause.Occur.MUST)
+                .add(new TermQuery(new Term(KnowledgeFields.DOMAIN, "apache_camel")), BooleanClause.Occur.MUST)
                 .add(new TermQuery(new Term(KnowledgeFields.DOC_TYPE, "errata")), BooleanClause.Occur.MUST)
                 .add(new TermQuery(new Term(KnowledgeFields.FIXED_IN_VERSIONS, version)), BooleanClause.Occur.MUST);
 

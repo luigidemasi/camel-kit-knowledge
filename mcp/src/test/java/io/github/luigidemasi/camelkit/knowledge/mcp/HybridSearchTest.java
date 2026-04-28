@@ -39,11 +39,11 @@ class HybridSearchTest {
         // Build a small in-memory index with embeddings
         Directory dir = new ByteBuffersDirectory();
         try (IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(new StandardAnalyzer()))) {
-            addDoc(writer, "doc1", "rh_build_camel", "http4 renamed to http",
+            addDoc(writer, "doc1", "apache_camel", "http4 renamed to http",
                     "The http4 component was renamed to http in Apache Camel 3.0. Update all URIs.");
-            addDoc(writer, "doc2", "rh_build_camel", "netty4 renamed to netty",
+            addDoc(writer, "doc2", "apache_camel", "netty4 renamed to netty",
                     "The netty4 component was renamed to netty in Apache Camel 3.0.");
-            addDoc(writer, "doc3", "rh_build_camel", "JMS configuration guide",
+            addDoc(writer, "doc3", "apache_camel", "JMS configuration guide",
                     "Configure ActiveMQ broker URL and connection pooling for message queues.");
             writer.commit();
         }
@@ -67,7 +67,7 @@ class HybridSearchTest {
     void keywordSearchFindsExactMatch() throws Exception {
         List<LuceneSearchService.SearchResult> results =
                 LuceneSearchService.hybridSearch(searcher, embeddingProvider,
-                        "rh_build_camel", "http4 renamed", null, null, 10, 0.6f, 0.4f);
+                        "apache_camel", "http4 renamed", null, null, 10, 0.6f, 0.4f);
         assertFalse(results.isEmpty());
         assertEquals("doc1", results.get(0).id());
     }
@@ -76,7 +76,7 @@ class HybridSearchTest {
     void semanticSearchFindsByMeaning() throws Exception {
         List<LuceneSearchService.SearchResult> results =
                 LuceneSearchService.hybridSearch(searcher, embeddingProvider,
-                        "rh_build_camel", "change HTTP library", null, null, 10, 0.6f, 0.4f);
+                        "apache_camel", "change HTTP library", null, null, 10, 0.6f, 0.4f);
         assertFalse(results.isEmpty(), "Semantic search should find results for paraphrased query");
         boolean foundHttp = results.stream().anyMatch(r -> r.id().equals("doc1"));
         assertTrue(foundHttp, "Should find http4 doc via semantic similarity");
@@ -86,7 +86,7 @@ class HybridSearchTest {
     void semanticSearchFindsMessageQueueByParaphrase() throws Exception {
         List<LuceneSearchService.SearchResult> results =
                 LuceneSearchService.hybridSearch(searcher, embeddingProvider,
-                        "rh_build_camel", "messaging system setup", null, null, 10, 0.6f, 0.4f);
+                        "apache_camel", "messaging system setup", null, null, 10, 0.6f, 0.4f);
         assertFalse(results.isEmpty());
         boolean foundJms = results.stream().anyMatch(r -> r.id().equals("doc3"));
         assertTrue(foundJms, "Should find JMS doc via semantic similarity to messaging");

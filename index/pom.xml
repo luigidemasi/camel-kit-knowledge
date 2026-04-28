@@ -61,7 +61,7 @@
                                     <outputFileName>model_quantized.onnx</outputFileName>
                                     <skipCache>false</skipCache>
                                     <overwrite>false</overwrite>
-                                    <readTimeout>120000</readTimeout>
+                                    <readTimeOut>120000</readTimeOut>
                                 </configuration>
                             </execution>
                             <execution>
@@ -76,7 +76,7 @@
                                     <outputFileName>model_quantized.onnx_data</outputFileName>
                                     <skipCache>false</skipCache>
                                     <overwrite>false</overwrite>
-                                    <readTimeout>120000</readTimeout>
+                                    <readTimeOut>120000</readTimeOut>
                                 </configuration>
                             </execution>
                         </executions>

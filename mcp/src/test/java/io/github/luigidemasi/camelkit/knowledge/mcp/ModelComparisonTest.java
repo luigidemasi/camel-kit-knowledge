@@ -48,10 +48,7 @@ class ModelComparisonTest {
     // Boilerplate section titles to skip
     private static final Set<String> SKIP_TITLES = Set.of(
             "Introduction", "Legal Notice", "Preface",
-            "Providing feedback on Red Hat build of Apache Camel documentation",
-            "Learn", "Try, buy, & sell", "Communities",
-            "About Red Hat Documentation", "Making open source more inclusive",
-            "About Red Hat", "Theme"
+            "Learn", "Communities", "Theme"
     );
 
     // --- Model configurations ---
@@ -164,11 +161,11 @@ class ModelComparisonTest {
 
     private Path resolveIndexerResources() {
         // Try relative to MCP module (Maven test cwd)
-        Path fromMcp = Path.of("../indexer/src/main/resources/rh-build-camel");
+        Path fromMcp = Path.of("../indexer/src/main/resources/apache-camel");
         if (Files.isDirectory(fromMcp)) return fromMcp;
 
         // Try from project root
-        Path fromRoot = Path.of("camel-kit-knowledge/indexer/src/main/resources/rh-build-camel");
+        Path fromRoot = Path.of("camel-kit-knowledge/indexer/src/main/resources/apache-camel");
         if (Files.isDirectory(fromRoot)) return fromRoot;
 
         throw new RuntimeException("Cannot find indexer resources. Run from MCP module or project root.");
@@ -245,7 +242,7 @@ class ModelComparisonTest {
     }
 
     private String cleanTitle(String title) {
-        // Remove "[... Copy link](#...)" suffix from Red Hat docs
+        // Remove "[... Copy link](#...)" suffix from docs
         int copyLink = title.indexOf(" Copy link");
         if (copyLink > 0) title = title.substring(0, copyLink);
         // Remove leading "[" and trailing "](#...)"
@@ -283,8 +280,8 @@ class ModelComparisonTest {
             int count = 0;
             for (DocChunk chunk : chunks) {
                 float[] embedding = provider.embed(chunk.sectionTitle() + " " + chunk.content());
-                KnowledgeDocument doc = new KnowledgeDocument(chunk.id(), "rh_build_camel")
-                        .source("rh-docs").docType("guide")
+                KnowledgeDocument doc = new KnowledgeDocument(chunk.id(), "apache_camel")
+                        .source("apache-camel").docType("guide")
                         .sectionTitle(chunk.sectionTitle())
                         .content(chunk.content())
                         .embedding(embedding);
@@ -309,7 +306,7 @@ class ModelComparisonTest {
             EvalQuery eq = QUERIES.get(qi);
             List<LuceneSearchService.SearchResult> searchResults =
                     LuceneSearchService.hybridSearch(searcher, provider,
-                            "rh_build_camel", eq.query(), null, null, 10, 0.2f, 0.8f);
+                            "apache_camel", eq.query(), null, null, 10, 0.2f, 0.8f);
 
             int rank = 0;
             float score = 0;

@@ -8,7 +8,7 @@ import java.util.List;
  */
 public record DocumentChunk(
     String id,              // unique chunk ID
-    String source,          // e.g., "red-hat-build-camel"
+    String source,          // e.g., "apache-camel"
     String docType,         // e.g., "guide", "release-notes", "errata"
     String sourceVersion,   // e.g., "2.x" (nullable)
     String targetVersion,   // e.g., "4.x" (nullable)
