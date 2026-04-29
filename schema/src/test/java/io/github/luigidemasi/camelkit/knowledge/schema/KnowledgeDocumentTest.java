@@ -34,8 +34,7 @@ class KnowledgeDocumentTest {
         DomainMetadata meta = DomainMetadata.migration(
                 "apache_camel_migration",
                 "camel_migration",
-                "Search Apache Camel migration docs"
-        );
+                "Search Apache Camel migration docs");
 
         assertEquals("apache_camel_migration", meta.domainId());
         assertEquals("camel_migration", meta.toolName());
@@ -48,8 +47,7 @@ class KnowledgeDocumentTest {
         DomainMetadata meta = DomainMetadata.general(
                 "best_practices",
                 "camel_best_practices",
-                "Search Camel best practices"
-        );
+                "Search Camel best practices");
 
         assertFalse(meta.hasComponentField());
         assertFalse(meta.hasVersionFields());

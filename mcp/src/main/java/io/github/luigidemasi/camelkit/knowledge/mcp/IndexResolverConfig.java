@@ -1,14 +1,14 @@
 package io.github.luigidemasi.camelkit.knowledge.mcp;
 
+import java.util.Optional;
+
 import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithDefault;
 import io.smallrye.config.WithName;
 
-import java.util.Optional;
-
 /**
- * Configuration for knowledge index artifact resolution.
- * The MCP server resolves the index JAR from Maven repositories at startup.
+ * Configuration for knowledge index artifact resolution. The MCP server resolves the index JAR from Maven repositories
+ * at startup.
  */
 @ConfigMapping(prefix = "knowledge.index")
 public interface IndexResolverConfig {

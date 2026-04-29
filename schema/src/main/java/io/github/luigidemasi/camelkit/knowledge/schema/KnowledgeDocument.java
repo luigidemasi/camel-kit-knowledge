@@ -2,13 +2,13 @@ package io.github.luigidemasi.camelkit.knowledge.schema;
 
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field.Store;
-import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.KnnFloatVectorField;
+import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
 
 /**
- * Builder for Lucene documents that enforces the knowledge schema.
- * Ensures correct field types (StringField for exact match, TextField for search).
+ * Builder for Lucene documents that enforces the knowledge schema. Ensures correct field types (StringField for exact
+ * match, TextField for search).
  */
 public class KnowledgeDocument {
 

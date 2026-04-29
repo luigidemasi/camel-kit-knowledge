@@ -1,9 +1,5 @@
 package io.github.luigidemasi.camelkit.knowledge.embedding;
 
-import ai.djl.huggingface.tokenizers.Encoding;
-import ai.djl.huggingface.tokenizers.HuggingFaceTokenizer;
-import ai.onnxruntime.*;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.LongBuffer;
@@ -13,12 +9,19 @@ import java.nio.file.StandardCopyOption;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import ai.djl.huggingface.tokenizers.Encoding;
+import ai.djl.huggingface.tokenizers.HuggingFaceTokenizer;
+import ai.onnxruntime.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
- * Embeds text using granite-embedding-small-english-r2 via ONNX Runtime.
- * Thread-safe. Model loaded lazily on first call.
+ * Embeds text using granite-embedding-small-english-r2 via ONNX Runtime. Thread-safe. Model loaded lazily on first
+ * call.
  */
 public class OnnxEmbeddingProvider implements EmbeddingProvider {
 
+    private static final Logger LOG = LoggerFactory.getLogger(OnnxEmbeddingProvider.class);
     private static final int DIMENSIONS = 384;
     private static final int MAX_SEQ_LENGTH = 512;
     private static final String MODEL_FILE = "models/model_quantized.onnx";
@@ -137,8 +140,7 @@ public class OnnxEmbeddingProvider implements EmbeddingProvider {
                             tokenizer = HuggingFaceTokenizer.newInstance(is, Map.of(
                                     "padding", "false",
                                     "truncation", "true",
-                                    "maxLength", String.valueOf(MAX_SEQ_LENGTH)
-                            ));
+                                    "maxLength", String.valueOf(MAX_SEQ_LENGTH)));
                         }
 
                         // Extract ONNX model files to temp dir (external data format
@@ -161,8 +163,9 @@ public class OnnxEmbeddingProvider implements EmbeddingProvider {
                         opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
                         session = env.createSession(modelPath.toString(), opts);
 
-                        System.out.println("  ONNX embedding model loaded (granite-embedding-small-english-r2, "
-                                + DIMENSIONS + " dims, Q8, " + threads + " threads)");
+                        LOG.info(
+                                "ONNX embedding model loaded (granite-embedding-small-english-r2, {} dims, Q8, {} threads)",
+                                DIMENSIONS, threads);
                     } catch (IOException | OrtException e) {
                         throw new RuntimeException("Failed to load ONNX embedding model", e);
                     }

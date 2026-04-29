@@ -1,28 +1,31 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer;
 
-import io.github.luigidemasi.camelkit.knowledge.embedding.OnnxEmbeddingProvider;
-import io.github.luigidemasi.camelkit.knowledge.indexer.domain.DocumentDomain;
-import io.github.luigidemasi.camelkit.knowledge.indexer.domain.ApacheCamelDomain;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+import io.github.luigidemasi.camelkit.knowledge.embedding.OnnxEmbeddingProvider;
+import io.github.luigidemasi.camelkit.knowledge.indexer.domain.ApacheCamelDomain;
+import io.github.luigidemasi.camelkit.knowledge.indexer.domain.DocumentDomain;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
- * CLI entry point for building the Lucene knowledge index.
- * Runs during CI/CD to produce the pre-built index artifact.
+ * CLI entry point for building the Lucene knowledge index. Runs during CI/CD to produce the pre-built index artifact.
  *
  * Usage: java -cp indexer.jar io.github.luigidemasi.camelkit.knowledge.indexer.IndexerMain [output-dir]
  *
- * System properties (override automatic path resolution):
- *   -Dindex.output=path        Output directory for the Lucene index
- *   -Dindex.resources=path     Indexer resources directory (HTML guides, errata JSON)
- *   -Dindex.cache=path         Docling markdown cache directory
+ * System properties (override automatic path resolution): -Dindex.output=path Output directory for the Lucene index
+ * -Dindex.resources=path Indexer resources directory (HTML guides, errata JSON) -Dindex.cache=path Docling markdown
+ * cache directory
  *
  */
 public class IndexerMain {
+
+    private static final Logger LOG = LoggerFactory.getLogger(IndexerMain.class);
 
     public static void main(String[] args) throws Exception {
         // Resolve base directories. System properties override automatic resolution.
@@ -43,16 +46,16 @@ public class IndexerMain {
                 null,
                 moduleDir.resolve("src/main/resources").toString());
 
-        System.out.println("Building camel-kit knowledge index...");
-        System.out.println("Output: " + outputDir);
-        System.out.println("Resources: " + resourcesDir);
-        System.out.println("Cache: " + cacheDir);
+        LOG.info("Building camel-kit knowledge index...");
+        LOG.info("Output: {}", outputDir);
+        LOG.info("Resources: {}", resourcesDir);
+        LOG.info("Cache: {}", cacheDir);
 
         Files.createDirectories(outputDir);
 
         List<DocumentDomain> domains = buildDomains(cacheDir, resourcesDir);
 
-        System.out.println("Loading embedding model...");
+        LOG.info("Loading embedding model...");
         OnnxEmbeddingProvider embeddingProvider = new OnnxEmbeddingProvider();
         IndexBuilder builder = new IndexBuilder(embeddingProvider);
         int total = builder.build(outputDir, domains);
@@ -69,14 +72,16 @@ public class IndexerMain {
             Files.write(manifestPath, fileNames);
         }
 
-        System.out.printf("%nIndex built successfully: %d documents in %d domains%n",
+        LOG.info("Index built successfully: {} documents in {} domains",
                 total, domains.size());
     }
 
     private static Path resolvePath(String sysProp, String argValue, String defaultValue) {
         String value = System.getProperty(sysProp);
-        if (value != null && !value.isBlank()) return Path.of(value).toAbsolutePath();
-        if (argValue != null && !argValue.isBlank()) return Path.of(argValue).toAbsolutePath();
+        if (value != null && !value.isBlank())
+            return Path.of(value).toAbsolutePath();
+        if (argValue != null && !argValue.isBlank())
+            return Path.of(argValue).toAbsolutePath();
         return Path.of(defaultValue).toAbsolutePath();
     }
 

@@ -1,44 +1,42 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer.asciidoc;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 /**
- * Minimal JSONPath evaluation utility supporting the patterns used by
- * Apache Camel's Antora documentation (component, EIP, and API JSON schemas).
+ * Minimal JSONPath evaluation utility supporting the patterns used by Apache Camel's Antora documentation (component,
+ * EIP, and API JSON schemas).
  *
- * <p>Supported patterns:
+ * <p>
+ * Supported patterns:
  * <ul>
- *   <li>{@code $.component} - object access</li>
- *   <li>{@code $.component.name} - nested access</li>
- *   <li>{@code $.componentProperties.*} - wildcard (all values)</li>
- *   <li>{@code $.properties[?(@.kind=="path")]} - equality filter</li>
- *   <li>{@code $.properties[?(@.displayName!="Id")]} - negation filter</li>
- *   <li>{@code $.properties[?(@.a!="X" && @.b!="Y")]} - compound AND filters</li>
- *   <li>{@code $.apis["apiName"].methods.*} - quoted key access</li>
+ * <li>{@code $.component} - object access</li>
+ * <li>{@code $.component.name} - nested access</li>
+ * <li>{@code $.componentProperties.*} - wildcard (all values)</li>
+ * <li>{@code $.properties[?(@.kind=="path")]} - equality filter</li>
+ * <li>{@code $.properties[?(@.displayName!="Id")]} - negation filter</li>
+ * <li>{@code $.properties[?(@.a!="X" && @.b!="Y")]} - compound AND filters</li>
+ * <li>{@code $.apis["apiName"].methods.*} - quoted key access</li>
  * </ul>
  */
 public final class JsonPathUtil {
 
     /** Pattern for filter expressions: [?(@.field=="value")] or [?(@.field!="value")] with optional && chains. */
     private static final Pattern FILTER_PATTERN = Pattern.compile(
-            "\\[\\?\\((.+)\\)\\]"
-    );
+            "\\[\\?\\((.+)\\)\\]");
 
     /** Pattern for a single condition inside a filter: @.field=="value" or @.field!="value". */
     private static final Pattern CONDITION_PATTERN = Pattern.compile(
-            "@\\.(\\w+)\\s*(==|!=)\\s*\"([^\"]*)\""
-    );
+            "@\\.(\\w+)\\s*(==|!=)\\s*\"([^\"]*)\"");
 
     /** Pattern for quoted key access: ["key"]. */
     private static final Pattern QUOTED_KEY_PATTERN = Pattern.compile(
-            "\\[\"([^\"]+)\"\\]"
-    );
+            "\\[\"([^\"]+)\"\\]");
 
     private JsonPathUtil() {
     }
@@ -46,11 +44,10 @@ public final class JsonPathUtil {
     /**
      * Execute a JSONPath query on a JSON root object.
      *
-     * @param root     the root JSON object
-     * @param jsonPath the JSONPath expression (must start with {@code $})
-     * @return a {@link JSONObject} for single object access, a {@link List} of objects
-     *         for wildcard/filter results, a primitive value for leaf access,
-     *         or {@code null} if the path does not exist
+     * @param  root     the root JSON object
+     * @param  jsonPath the JSONPath expression (must start with {@code $})
+     * @return          a {@link JSONObject} for single object access, a {@link List} of objects for wildcard/filter
+     *                  results, a primitive value for leaf access, or {@code null} if the path does not exist
      */
     public static Object query(JSONObject root, String jsonPath) {
         if (root == null || jsonPath == null || !jsonPath.startsWith("$")) {
@@ -109,13 +106,12 @@ public final class JsonPathUtil {
     }
 
     /**
-     * Count nodes matching a JSONPath query.
-     * For wildcards/filters, counts matching entries.
-     * For a JSONObject result, returns its key count.
+     * Count nodes matching a JSONPath query. For wildcards/filters, counts matching entries. For a JSONObject result,
+     * returns its key count.
      *
-     * @param root     the root JSON object
-     * @param jsonPath the JSONPath expression
-     * @return the count of matching nodes, or 0 if the path does not exist
+     * @param  root     the root JSON object
+     * @param  jsonPath the JSONPath expression
+     * @return          the count of matching nodes, or 0 if the path does not exist
      */
     public static int countNodes(JSONObject root, String jsonPath) {
         Object result = query(root, jsonPath);
@@ -138,9 +134,9 @@ public final class JsonPathUtil {
     /**
      * Safely extract a string field from a JSONObject.
      *
-     * @param obj   the JSON object
-     * @param field the field name
-     * @return the string value, or empty string if the field doesn't exist or is null
+     * @param  obj   the JSON object
+     * @param  field the field name
+     * @return       the string value, or empty string if the field doesn't exist or is null
      */
     public static String extractString(JSONObject obj, String field) {
         if (obj == null || !obj.has(field) || obj.isNull(field)) {
@@ -150,11 +146,10 @@ public final class JsonPathUtil {
     }
 
     /**
-     * Safely convert a value to its string representation.
-     * Handles strings, numbers, booleans, and null.
+     * Safely convert a value to its string representation. Handles strings, numbers, booleans, and null.
      *
-     * @param value the value to convert
-     * @return the string representation, or empty string if null
+     * @param  value the value to convert
+     * @return       the string representation, or empty string if null
      */
     public static String valueAsString(Object value) {
         if (value == null || JSONObject.NULL.equals(value)) {
@@ -164,14 +159,15 @@ public final class JsonPathUtil {
     }
 
     /**
-     * Tokenize a JSONPath expression (after stripping "$." prefix) into segments.
-     * Handles dot-separated keys, quoted bracket keys, filter expressions, and wildcards.
+     * Tokenize a JSONPath expression (after stripping "$." prefix) into segments. Handles dot-separated keys, quoted
+     * bracket keys, filter expressions, and wildcards.
      *
-     * <p>Examples:
+     * <p>
+     * Examples:
      * <ul>
-     *   <li>{@code component.name} -> {@code ["component", "name"]}</li>
-     *   <li>{@code apis["apiName"].methods.*} -> {@code ["apis", "apiName", "methods", "*"]}</li>
-     *   <li>{@code properties[?(@.kind=="path")]} -> {@code ["properties", "[?(@.kind==\"path\")]"]}</li>
+     * <li>{@code component.name} -> {@code ["component", "name"]}</li>
+     * <li>{@code apis["apiName"].methods.*} -> {@code ["apis", "apiName", "methods", "*"]}</li>
+     * <li>{@code properties[?(@.kind=="path")]} -> {@code ["properties", "[?(@.kind==\"path\")]"]}</li>
      * </ul>
      */
     private static List<String> tokenize(String path) {
@@ -223,8 +219,8 @@ public final class JsonPathUtil {
     }
 
     /**
-     * Extract the key from a segment. If the segment is a quoted bracket key like
-     * {@code ["apiName"]}, extracts {@code apiName}. Otherwise returns the segment as-is.
+     * Extract the key from a segment. If the segment is a quoted bracket key like {@code ["apiName"]}, extracts
+     * {@code apiName}. Otherwise returns the segment as-is.
      */
     private static String extractKey(String segment) {
         Matcher m = QUOTED_KEY_PATTERN.matcher(segment);
@@ -235,13 +231,13 @@ public final class JsonPathUtil {
     }
 
     /**
-     * Apply a filter expression to a JSONObject whose values are themselves JSONObjects.
-     * The filter string is the content inside {@code [?( ... )]}, e.g.
-     * {@code @.kind=="path"} or {@code @.displayName!="Id" && @.displayName!="Description"}.
+     * Apply a filter expression to a JSONObject whose values are themselves JSONObjects. The filter string is the
+     * content inside {@code [?( ... )]}, e.g. {@code @.kind=="path"} or
+     * {@code @.displayName!="Id" && @.displayName!="Description"}.
      *
-     * @param obj          the JSONObject whose values to filter
-     * @param filterExpr   the raw filter expression (between parentheses)
-     * @return a list of matching values, or null if none match
+     * @param  obj        the JSONObject whose values to filter
+     * @param  filterExpr the raw filter expression (between parentheses)
+     * @return            a list of matching values, or null if none match
      */
     private static List<Object> applyFilter(JSONObject obj, String filterExpr) {
         // Split on && for compound conditions

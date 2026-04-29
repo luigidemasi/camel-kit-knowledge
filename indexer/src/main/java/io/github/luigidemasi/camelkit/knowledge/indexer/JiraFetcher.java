@@ -1,8 +1,5 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -15,19 +12,28 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
- * Fetches JIRA issue details from Apache JIRA.
- * Results are cached as JSON files to avoid re-fetching on every indexer run.
+ * Fetches JIRA issue details from Apache JIRA. Results are cached as JSON files to avoid re-fetching on every indexer
+ * run.
  *
- * <p>Routing by prefix:
+ * <p>
+ * Routing by prefix:
  * <ul>
- *   <li>CAMEL-* -> issues.apache.org (public, no auth)</li>
+ * <li>CAMEL-* -> issues.apache.org (public, no auth)</li>
  * </ul>
  */
 public class JiraFetcher {
 
+    private static final Logger LOG = LoggerFactory.getLogger(JiraFetcher.class);
+
     private static final String APACHE_JIRA_URL = "https://issues.apache.org/jira/rest/api/2/issue/";
-    private static final String FIELDS = "summary,description,fixVersions,components,status,priority,labels,issuetype,resolution";
+    private static final String FIELDS
+            = "summary,description,fixVersions,components,status,priority,labels,issuetype,resolution";
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
     private static final int MAX_RETRIES = 10;
     private static final long INITIAL_BACKOFF_MS = 2000;
@@ -58,8 +64,7 @@ public class JiraFetcher {
             String status,
             String priority,
             String issueType,
-            String resolution
-    ) {
+            String resolution) {
         /**
          * Format the issue as enriched content for indexing.
          */
@@ -96,8 +101,8 @@ public class JiraFetcher {
     }
 
     /**
-     * Fetch a JIRA issue, using cache if available.
-     * Returns null if the issue cannot be fetched (network error, auth issue, etc.).
+     * Fetch a JIRA issue, using cache if available. Returns null if the issue cannot be fetched (network error, auth
+     * issue, etc.).
      */
     public JiraIssue fetch(String jiraId) {
         try {
@@ -108,23 +113,25 @@ public class JiraFetcher {
                 json = Files.readString(cacheFile);
             } else {
                 json = downloadIssue(jiraId);
-                if (json == null) return null;
+                if (json == null)
+                    return null;
                 Files.writeString(cacheFile, json);
             }
 
             return parseIssue(jiraId, json);
         } catch (Exception e) {
-            System.out.printf("  WARN: Failed to fetch JIRA %s: %s%n", jiraId, e.getMessage());
+            LOG.warn("  Failed to fetch JIRA {}: {}", jiraId, e.getMessage());
             return null;
         }
     }
 
     private String downloadIssue(String jiraId) {
         String prefix = jiraId.contains("-") ? jiraId.substring(0, jiraId.indexOf('-')) : null;
-        if (prefix == null) return null;
+        if (prefix == null)
+            return null;
 
         if (!KNOWN_PREFIXES.contains(prefix)) {
-            System.out.printf("  WARN: Unknown JIRA prefix: %s (skipping)%n", prefix);
+            LOG.warn("  Unknown JIRA prefix: {} (skipping)", prefix);
             return null;
         }
 
@@ -152,28 +159,29 @@ public class JiraFetcher {
                         if (retryAfter != null) {
                             try {
                                 backoff = Math.min(Long.parseLong(retryAfter) * 1000, MAX_BACKOFF_MS);
-                            } catch (NumberFormatException ignored) {}
+                            } catch (NumberFormatException ignored) {
+                            }
                         }
-                        System.out.printf("  WARN: JIRA %s rate-limited (429), retrying in %ds (attempt %d/%d)%n",
+                        LOG.warn("  JIRA {} rate-limited (429), retrying in {}s (attempt {}/{})",
                                 jiraId, backoff / 1000, attempt + 1, MAX_RETRIES);
                         Thread.sleep(backoff);
                         continue;
                     }
-                    System.out.printf("  WARN: JIRA %s rate-limited (429), giving up after %d retries%n",
+                    LOG.warn("  JIRA {} rate-limited (429), giving up after {} retries",
                             jiraId, MAX_RETRIES);
                     return null;
                 } else if (response.statusCode() == 404) {
-                    System.out.printf("  WARN: JIRA %s not found (404)%n", jiraId);
+                    LOG.warn("  JIRA {} not found (404)", jiraId);
                     return null;
                 } else {
-                    System.out.printf("  WARN: JIRA %s returned HTTP %d%n", jiraId, response.statusCode());
+                    LOG.warn("  JIRA {} returned HTTP {}", jiraId, response.statusCode());
                     return null;
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return null;
             } catch (IOException e) {
-                System.out.printf("  WARN: Failed to download JIRA %s: %s%n", jiraId, e.getMessage());
+                LOG.warn("  Failed to download JIRA {}: {}", jiraId, e.getMessage());
                 return null;
             }
         }
@@ -224,10 +232,11 @@ public class JiraFetcher {
                 resolution = fields.getJSONObject("resolution").optString("name", null);
             }
 
-            return new JiraIssue(jiraId, summary, description, fixVersions, components,
+            return new JiraIssue(
+                    jiraId, summary, description, fixVersions, components,
                     status, priority, issueType, resolution);
         } catch (Exception e) {
-            System.out.printf("  WARN: Failed to parse JIRA JSON for %s: %s%n", jiraId, e.getMessage());
+            LOG.warn("  Failed to parse JIRA JSON for {}: {}", jiraId, e.getMessage());
             return null;
         }
     }

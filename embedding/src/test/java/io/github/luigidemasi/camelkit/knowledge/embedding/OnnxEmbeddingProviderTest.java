@@ -4,14 +4,10 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests for OnnxEmbeddingProvider.
- * Requires model.onnx to be present — skipped if not downloaded.
+ * Tests for OnnxEmbeddingProvider. Requires model.onnx to be present — skipped if not downloaded.
  */
 @EnabledIf("modelExists")
 class OnnxEmbeddingProviderTest {
@@ -20,7 +16,8 @@ class OnnxEmbeddingProviderTest {
 
     static boolean modelExists() {
         return OnnxEmbeddingProviderTest.class.getClassLoader()
-                .getResource("models/model_quantized.onnx") != null;
+                .getResource("models/model_quantized.onnx")
+               != null;
     }
 
     @BeforeAll

@@ -6,11 +6,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Splits Markdown text into sections at heading boundaries (##, ###, ####).
- * Each section becomes a self-contained chunk with its heading as the title.
+ * Splits Markdown text into sections at heading boundaries (##, ###, ####). Each section becomes a self-contained chunk
+ * with its heading as the title.
  *
- * Designed to process Docling output, which converts all document formats
- * (PDF, HTML, AsciiDoc, etc.) into consistent Markdown with heading hierarchy.
+ * Designed to process Docling output, which converts all document formats (PDF, HTML, AsciiDoc, etc.) into consistent
+ * Markdown with heading hierarchy.
  */
 public class SectionChunker {
 
@@ -19,14 +19,15 @@ public class SectionChunker {
     /**
      * A single section extracted from the document.
      */
-    public record Section(String title, String content, int level) {}
+    public record Section(String title, String content, int level) {
+    }
 
     /**
-     * Split markdown text into sections at heading boundaries.
-     * Content before the first heading is included as a section with title "Introduction".
+     * Split markdown text into sections at heading boundaries. Content before the first heading is included as a
+     * section with title "Introduction".
      *
-     * @param markdown the full markdown text
-     * @return list of sections, each with a title and content
+     * @param  markdown the full markdown text
+     * @return          list of sections, each with a title and content
      */
     public List<Section> chunk(String markdown) {
         List<Section> sections = new ArrayList<>();

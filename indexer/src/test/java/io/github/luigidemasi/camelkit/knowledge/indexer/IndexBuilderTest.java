@@ -1,9 +1,14 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer;
 
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.List;
+
 import io.github.luigidemasi.camelkit.knowledge.indexer.domain.DocumentChunk;
 import io.github.luigidemasi.camelkit.knowledge.indexer.domain.DocumentDomain;
 import io.github.luigidemasi.camelkit.knowledge.schema.DomainMetadata;
 import io.github.luigidemasi.camelkit.knowledge.schema.KnowledgeFields;
+
 import org.apache.lucene.document.Document;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
@@ -14,10 +19,6 @@ import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.FSDirectory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-
-import java.io.IOException;
-import java.nio.file.Path;
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -33,18 +34,18 @@ class IndexBuilderTest {
             @Override
             public DomainMetadata metadata() {
                 return DomainMetadata.migration(
-                    "test_migration", "camel_test_migration", "Test migration docs"
-                );
+                        "test_migration", "camel_test_migration", "Test migration docs");
             }
 
             @Override
             public List<DocumentChunk> buildChunks() {
                 return List.of(
-                    new DocumentChunk("chunk-1", "test-source", "component-migration",
-                        "2.x", "4.x", "http4", "http4 renamed", "http4 renamed to http"),
-                    new DocumentChunk("chunk-2", "test-source", "component-migration",
-                        "2.x", "4.x", "netty4", "netty4 renamed", "netty4 renamed to netty")
-                );
+                        new DocumentChunk(
+                                "chunk-1", "test-source", "component-migration",
+                                "2.x", "4.x", "http4", "http4 renamed", "http4 renamed to http"),
+                        new DocumentChunk(
+                                "chunk-2", "test-source", "component-migration",
+                                "2.x", "4.x", "netty4", "netty4 renamed", "netty4 renamed to netty"));
             }
         };
 
@@ -59,7 +60,7 @@ class IndexBuilderTest {
 
             // Exact component lookup
             TopDocs hits = searcher.search(
-                new TermQuery(new Term(KnowledgeFields.COMPONENT, "http4")), 10);
+                    new TermQuery(new Term(KnowledgeFields.COMPONENT, "http4")), 10);
             assertEquals(1, hits.totalHits.value);
 
             Document doc = searcher.doc(hits.scoreDocs[0].doc);
@@ -84,9 +85,9 @@ class IndexBuilderTest {
             @Override
             public List<DocumentChunk> buildChunks() {
                 return List.of(
-                    new DocumentChunk("a-1", "src-a", "component-migration",
-                        "2.x", "4.x", "comp-a", "title-a", "content-a")
-                );
+                        new DocumentChunk(
+                                "a-1", "src-a", "component-migration",
+                                "2.x", "4.x", "comp-a", "title-a", "content-a"));
             }
         };
 
@@ -99,9 +100,9 @@ class IndexBuilderTest {
             @Override
             public List<DocumentChunk> buildChunks() {
                 return List.of(
-                    new DocumentChunk("b-1", "src-b", "platform-change",
-                        null, null, null, "title-b", "content-b")
-                );
+                        new DocumentChunk(
+                                "b-1", "src-b", "platform-change",
+                                null, null, null, "title-b", "content-b"));
             }
         };
 
@@ -114,11 +115,11 @@ class IndexBuilderTest {
             IndexSearcher searcher = new IndexSearcher(reader);
 
             TopDocs hitsA = searcher.search(
-                new TermQuery(new Term(KnowledgeFields.DOMAIN, "domain_a")), 10);
+                    new TermQuery(new Term(KnowledgeFields.DOMAIN, "domain_a")), 10);
             assertEquals(1, hitsA.totalHits.value);
 
             TopDocs hitsB = searcher.search(
-                new TermQuery(new Term(KnowledgeFields.DOMAIN, "domain_b")), 10);
+                    new TermQuery(new Term(KnowledgeFields.DOMAIN, "domain_b")), 10);
             assertEquals(1, hitsB.totalHits.value);
         }
     }

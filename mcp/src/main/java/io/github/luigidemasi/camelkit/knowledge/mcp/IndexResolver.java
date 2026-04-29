@@ -1,7 +1,18 @@
 package io.github.luigidemasi.camelkit.knowledge.mcp;
 
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.*;
+import java.util.*;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
+
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+
+import javax.xml.parsers.DocumentBuilderFactory;
+
 import org.apache.maven.repository.internal.MavenRepositorySystemUtils;
 import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.RepositorySystem;
@@ -21,29 +32,25 @@ import org.eclipse.aether.spi.connector.RepositoryConnectorFactory;
 import org.eclipse.aether.spi.connector.transport.TransporterFactory;
 import org.eclipse.aether.transport.file.FileTransporterFactory;
 import org.eclipse.aether.transport.http.HttpTransporterFactory;
-
-import javax.xml.parsers.DocumentBuilderFactory;
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.*;
-import java.util.*;
-import java.util.jar.JarEntry;
-import java.util.jar.JarFile;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Resolves the knowledge index artifact from Maven repositories at startup.
  *
- * <p>Flow:
+ * <p>
+ * Flow:
  * <ol>
- *   <li>Build list of remote repos from config properties</li>
- *   <li>If version specified in config, use it; otherwise resolve latest from maven-metadata.xml</li>
- *   <li>Resolve artifact (downloads to local repo if not cached)</li>
- *   <li>Extract knowledge-index/* from the JAR to a temp directory</li>
+ * <li>Build list of remote repos from config properties</li>
+ * <li>If version specified in config, use it; otherwise resolve latest from maven-metadata.xml</li>
+ * <li>Resolve artifact (downloads to local repo if not cached)</li>
+ * <li>Extract knowledge-index/* from the JAR to a temp directory</li>
  * </ol>
  */
 @ApplicationScoped
 public class IndexResolver {
+
+    private static final Logger LOG = LoggerFactory.getLogger(IndexResolver.class);
 
     private static final String INDEX_PREFIX = "knowledge-index/";
 
@@ -53,15 +60,15 @@ public class IndexResolver {
     /**
      * Resolve and extract the knowledge index, returning the path to the extracted directory.
      *
-     * @return path to directory containing extracted Lucene index files
+     * @return                        path to directory containing extracted Lucene index files
      * @throws IndexResolverException if resolution fails and no cached version is available
      */
     public Path resolve() throws IndexResolverException {
         RepositorySystem repoSystem = newRepositorySystem();
         Path localRepoPath = resolveLocalRepoPath();
-        System.out.printf("IndexResolver: local repo path = %s (exists: %b)%n",
+        LOG.debug("IndexResolver: local repo path = {} (exists: {})",
                 localRepoPath, java.nio.file.Files.isDirectory(localRepoPath));
-        System.out.printf("IndexResolver: user.home = %s%n", System.getProperty("user.home"));
+        LOG.debug("IndexResolver: user.home = {}", System.getProperty("user.home"));
         LocalRepository localRepo = new LocalRepository(localRepoPath.toFile());
 
         DefaultRepositorySystemSession session = MavenRepositorySystemUtils.newSession();
@@ -71,7 +78,7 @@ public class IndexResolver {
         try {
             List<RemoteRepository> remoteRepos = buildRemoteRepositories();
             String version = resolveVersion(repoSystem, session, remoteRepos);
-            System.out.printf("IndexResolver: resolved version = %s%n", version);
+            LOG.info("IndexResolver: resolved version = {}", version);
 
             Artifact artifact = new DefaultArtifact(
                     config.groupId(), config.artifactId(), "jar", version);
@@ -86,33 +93,32 @@ public class IndexResolver {
 
             File jarFile = result.getArtifact().getFile();
             Path jarPath = jarFile.toPath();
-            System.out.printf("Knowledge index resolved: %s (version %s)%n",
-                    jarPath, version);
+            LOG.info("Knowledge index resolved: {} (version {})", jarPath, version);
 
             return extractIndexFromJar(jarPath);
 
         } catch (IndexResolverException e) {
-            System.out.printf("IndexResolver: IndexResolverException: %s%n", e.getMessage());
+            LOG.debug("IndexResolver: IndexResolverException: {}", e.getMessage());
             Path fallback = findLatestLocalVersion(localRepoPath);
-            System.out.printf("IndexResolver: fallback JAR = %s%n", fallback);
+            LOG.debug("IndexResolver: fallback JAR = {}", fallback);
             if (fallback != null) {
-                System.out.printf("WARNING: Remote resolution failed, using cached index: %s%n",
-                        fallback);
+                LOG.warn("Remote resolution failed, using cached index: {}", fallback);
                 return extractIndexFromJar(fallback);
             }
             throw e;
         } catch (Exception e) {
-            System.out.printf("IndexResolver: Exception: %s%n", e.getMessage());
+            LOG.debug("IndexResolver: Exception: {}", e.getMessage());
             Path fallback = findLatestLocalVersion(localRepoPath);
-            System.out.printf("IndexResolver: fallback JAR = %s%n", fallback);
+            LOG.debug("IndexResolver: fallback JAR = {}", fallback);
             if (fallback != null) {
-                System.out.printf("WARNING: Remote resolution failed (%s), using cached index: %s%n",
+                LOG.warn("Remote resolution failed ({}), using cached index: {}",
                         e.getMessage(), fallback);
                 return extractIndexFromJar(fallback);
             }
             throw new IndexResolverException(
                     "Failed to resolve index artifact and no cached version found. " +
-                    "Install the index locally with: mvn install -pl index -Prebuild-index -Drevision=$(date +%%Y%%m%%d%%H%%M)", e);
+                                             "Install the index locally with: mvn install -pl index -Prebuild-index -Drevision=$(date +%%Y%%m%%d%%H%%M)",
+                    e);
         }
     }
 
@@ -124,9 +130,11 @@ public class IndexResolver {
         return locator.getService(RepositorySystem.class);
     }
 
-    private String resolveVersion(RepositorySystem repoSystem,
-                                  DefaultRepositorySystemSession session,
-                                  List<RemoteRepository> remoteRepos) throws IndexResolverException {
+    private String resolveVersion(
+            RepositorySystem repoSystem,
+            DefaultRepositorySystemSession session,
+            List<RemoteRepository> remoteRepos)
+            throws IndexResolverException {
 
         if (config.version().isPresent() && !config.version().get().isBlank()) {
             return config.version().get();
@@ -178,7 +186,8 @@ public class IndexResolver {
             var releaseNodes = doc.getElementsByTagName("release");
             if (releaseNodes.getLength() > 0) {
                 String release = releaseNodes.item(0).getTextContent().trim();
-                if (!release.isEmpty()) return release;
+                if (!release.isEmpty())
+                    return release;
             }
 
             var versionNodes = doc.getElementsByTagName("knowledge.mcp.version");
@@ -191,8 +200,7 @@ public class IndexResolver {
             }
             return latest;
         } catch (Exception e) {
-            System.out.printf("WARNING: Failed to parse maven-metadata.xml at %s: %s%n",
-                    metadataPath, e.getMessage());
+            LOG.warn("Failed to parse maven-metadata.xml at {}: {}", metadataPath, e.getMessage());
             return null;
         }
     }
@@ -254,7 +262,8 @@ public class IndexResolver {
                 var nodes = doc.getElementsByTagName("localRepository");
                 if (nodes.getLength() > 0) {
                     String path = nodes.item(0).getTextContent().trim();
-                    if (!path.isEmpty()) return Path.of(path);
+                    if (!path.isEmpty())
+                        return Path.of(path);
                 }
             } catch (Exception e) {
                 // Fall through to default
@@ -268,10 +277,11 @@ public class IndexResolver {
                 .resolve(config.groupId().replace('.', '/'))
                 .resolve(config.artifactId());
 
-        System.out.printf("IndexResolver: looking for local versions in %s (exists: %b)%n",
+        LOG.debug("IndexResolver: looking for local versions in {} (exists: {})",
                 artifactDir, Files.isDirectory(artifactDir));
 
-        if (!Files.isDirectory(artifactDir)) return null;
+        if (!Files.isDirectory(artifactDir))
+            return null;
 
         try (var versions = Files.list(artifactDir)) {
             return versions
@@ -291,7 +301,12 @@ public class IndexResolver {
     }
 
     public static class IndexResolverException extends Exception {
-        public IndexResolverException(String message) { super(message); }
-        public IndexResolverException(String message, Throwable cause) { super(message, cause); }
+        public IndexResolverException(String message) {
+            super(message);
+        }
+
+        public IndexResolverException(String message, Throwable cause) {
+            super(message, cause);
+        }
     }
 }

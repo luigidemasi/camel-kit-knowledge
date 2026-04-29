@@ -1,12 +1,13 @@
 package io.github.luigidemasi.camelkit.knowledge.schema;
 
 /**
- * Lucene field name constants shared between the indexer and the MCP server.
- * Any field name change here is caught at compile time in both projects.
+ * Lucene field name constants shared between the indexer and the MCP server. Any field name change here is caught at
+ * compile time in both projects.
  */
 public final class KnowledgeFields {
 
-    private KnowledgeFields() {}
+    private KnowledgeFields() {
+    }
 
     // Identity & filtering
     public static final String ID = "id";

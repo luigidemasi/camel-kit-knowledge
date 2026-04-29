@@ -1,9 +1,10 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer.chunker;
 
-import io.github.luigidemasi.camelkit.knowledge.indexer.chunker.SectionChunker.Section;
-import org.junit.jupiter.api.Test;
-
 import java.util.List;
+
+import io.github.luigidemasi.camelkit.knowledge.indexer.chunker.SectionChunker.Section;
+
+import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 

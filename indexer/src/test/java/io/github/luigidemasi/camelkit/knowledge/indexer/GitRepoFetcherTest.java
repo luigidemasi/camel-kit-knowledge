@@ -1,12 +1,12 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer;
 
-import org.junit.jupiter.api.Disabled;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -23,8 +23,7 @@ class GitRepoFetcherTest {
         Path repoDir = fetcher.fetchRepo(
                 "https://github.com/apache/camel-website.git",
                 "main",
-                "camel-website"
-        );
+                "camel-website");
 
         assertTrue(Files.isDirectory(repoDir));
         assertTrue(Files.isDirectory(repoDir.resolve("content/security")));
@@ -36,8 +35,7 @@ class GitRepoFetcherTest {
         Path repoDir = fetcher.fetchRepo(
                 "https://github.com/apache/camel-website.git",
                 "main",
-                "camel-website"
-        );
+                "camel-website");
 
         List<Path> cveFiles = fetcher.listFiles(repoDir.resolve("content/security"), "CVE-*.md");
         assertFalse(cveFiles.isEmpty(), "Should find CVE advisory files");

@@ -10,11 +10,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
- * Fetches documents from URLs to local temporary files for parsing.
- * Supports HTTP/HTTPS URLs and handles redirects.
+ * Fetches documents from URLs to local temporary files for parsing. Supports HTTP/HTTPS URLs and handles redirects.
  */
 public class DocumentFetcher {
+
+    private static final Logger LOG = LoggerFactory.getLogger(DocumentFetcher.class);
 
     private final HttpClient httpClient;
     private final Path cacheDir;
@@ -28,22 +32,21 @@ public class DocumentFetcher {
     }
 
     /**
-     * Fetch a document from a URL and save it to the cache directory.
-     * Returns the path to the downloaded file.
+     * Fetch a document from a URL and save it to the cache directory. Returns the path to the downloaded file.
      *
-     * @param url the URL to fetch
-     * @param fileName the local filename to save as
-     * @return path to the downloaded file
+     * @param  url      the URL to fetch
+     * @param  fileName the local filename to save as
+     * @return          path to the downloaded file
      */
     public Path fetch(String url, String fileName) throws IOException, InterruptedException {
         Path target = cacheDir.resolve(fileName);
 
         if (Files.exists(target)) {
-            System.out.printf("  Cache hit: %s%n", fileName);
+            LOG.info("  Cache hit: {}", fileName);
             return target;
         }
 
-        System.out.printf("  Fetching: %s%n", url);
+        LOG.info("  Fetching: {}", url);
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
@@ -67,8 +70,8 @@ public class DocumentFetcher {
     /**
      * Fetch raw text content from a URL (for AsciiDoc, Markdown, YAML).
      *
-     * @param url the URL to fetch
-     * @return the text content
+     * @param  url the URL to fetch
+     * @return     the text content
      */
     public String fetchText(String url) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder()

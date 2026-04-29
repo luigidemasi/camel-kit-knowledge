@@ -1,15 +1,15 @@
 package io.github.luigidemasi.camelkit.knowledge.schema;
 
 /**
- * Metadata describing a document domain. Stored as JSON in the Lucene index
- * and read by the MCP server to dynamically register tools.
+ * Metadata describing a document domain. Stored as JSON in the Lucene index and read by the MCP server to dynamically
+ * register tools.
  */
 public record DomainMetadata(
-    String domainId,        // e.g., "apache_camel"
-    String toolName,        // e.g., "camel_docs"
-    String description,     // tool description for LLM
-    boolean hasComponentField,  // whether docs have exact-match component field
-    boolean hasVersionFields    // whether docs have source_version/target_version
+        String domainId,        // e.g., "apache_camel"
+        String toolName,        // e.g., "camel_docs"
+        String description,     // tool description for LLM
+        boolean hasComponentField,  // whether docs have exact-match component field
+        boolean hasVersionFields    // whether docs have source_version/target_version
 ) {
     /**
      * Create metadata for a migration domain (has component, version fields).

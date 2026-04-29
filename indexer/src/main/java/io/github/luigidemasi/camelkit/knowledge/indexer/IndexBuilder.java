@@ -1,10 +1,16 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer;
 
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Locale;
+
 import io.github.luigidemasi.camelkit.knowledge.embedding.EmbeddingProvider;
 import io.github.luigidemasi.camelkit.knowledge.indexer.domain.DocumentChunk;
 import io.github.luigidemasi.camelkit.knowledge.indexer.domain.DocumentDomain;
 import io.github.luigidemasi.camelkit.knowledge.schema.DomainMetadata;
 import io.github.luigidemasi.camelkit.knowledge.schema.KnowledgeDocument;
+
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
@@ -13,13 +19,9 @@ import org.apache.lucene.store.FSDirectory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.nio.file.Path;
-import java.util.List;
-
 /**
- * Builds a Lucene index from a list of document domains.
- * Each domain contributes its chunks and metadata to a single shared index.
+ * Builds a Lucene index from a list of document domains. Each domain contributes its chunks and metadata to a single
+ * shared index.
  */
 public class IndexBuilder {
 
@@ -40,9 +42,9 @@ public class IndexBuilder {
     /**
      * Build the Lucene index at the given path from the provided domains.
      *
-     * @param indexPath directory where the Lucene index will be written
-     * @param domains   list of domains to index
-     * @return total number of documents indexed
+     * @param  indexPath directory where the Lucene index will be written
+     * @param  domains   list of domains to index
+     * @return           total number of documents indexed
      */
     public int build(Path indexPath, List<DocumentDomain> domains) throws IOException, InterruptedException {
         int totalDocs = 0;
@@ -138,27 +140,26 @@ public class IndexBuilder {
                     }
                 }
 
-                System.out.printf("  Domain '%s': %d chunks indexed, %d embedded%n",
+                LOG.info("  Domain '{}': {} chunks indexed, {} embedded",
                         meta.domainId(), chunks.size(), embeddedCount);
             }
 
             writer.commit();
         }
 
-        System.out.printf("Index built: %d total documents%n", totalDocs);
+        LOG.info("Index built: {} total documents", totalDocs);
         return totalDocs;
     }
 
     private String serializeMeta(DomainMetadata meta) {
         // Simple JSON serialization without Jackson dependency
-        return String.format(
-            "{\"domainId\":\"%s\",\"toolName\":\"%s\",\"description\":\"%s\",\"hasComponentField\":%s,\"hasVersionFields\":%s}",
-            escape(meta.domainId()),
-            escape(meta.toolName()),
-            escape(meta.description()),
-            meta.hasComponentField(),
-            meta.hasVersionFields()
-        );
+        return String.format(Locale.ROOT,
+                "{\"domainId\":\"%s\",\"toolName\":\"%s\",\"description\":\"%s\",\"hasComponentField\":%s,\"hasVersionFields\":%s}",
+                escape(meta.domainId()),
+                escape(meta.toolName()),
+                escape(meta.description()),
+                meta.hasComponentField(),
+                meta.hasVersionFields());
     }
 
     private String escape(String s) {

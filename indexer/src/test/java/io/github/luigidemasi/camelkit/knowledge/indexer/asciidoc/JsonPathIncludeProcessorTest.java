@@ -1,14 +1,14 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer.asciidoc;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 import org.asciidoctor.Asciidoctor;
 import org.asciidoctor.Options;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -85,12 +85,13 @@ class JsonPathIncludeProcessorTest {
     void setsRenamedAttributeFromExpression() throws IOException {
         writeJsonFile("json/kafka.json", KAFKA_JSON);
 
-        String adoc = """
-                :shortname: kafka
-                include::jsonpath$example$json/kafka.json[query='$.component',formats='name,scheme,pascalcasescheme=util.pascalCase(scheme),syntax']
+        String adoc
+                = """
+                        :shortname: kafka
+                        include::jsonpath$example$json/kafka.json[query='$.component',formats='name,scheme,pascalcasescheme=util.pascalCase(scheme),syntax']
 
-                Header prefix is Camel{pascalcasescheme}.
-                """;
+                        Header prefix is Camel{pascalcasescheme}.
+                        """;
 
         String output = render(adoc, tempDir);
 
@@ -102,12 +103,13 @@ class JsonPathIncludeProcessorTest {
     void setsCountAttributes() throws IOException {
         writeJsonFile("json/kafka.json", KAFKA_JSON);
 
-        String adoc = """
-                :shortname: kafka
-                include::jsonpathcount$example$json/kafka.json[queries='propertycount=nodes$.componentProperties.*,pathparametercount=nodes$.properties[?(@.kind=="path")],queryparametercount=nodes$.properties[?(@.kind=="parameter")]']
+        String adoc
+                = """
+                        :shortname: kafka
+                        include::jsonpathcount$example$json/kafka.json[queries='propertycount=nodes$.componentProperties.*,pathparametercount=nodes$.properties[?(@.kind=="path")],queryparametercount=nodes$.properties[?(@.kind=="parameter")]']
 
-                Component has {propertycount} options, {pathparametercount} path params, {queryparametercount} query params.
-                """;
+                        Component has {propertycount} options, {pathparametercount} path params, {queryparametercount} query params.
+                        """;
 
         String output = render(adoc, tempDir);
 

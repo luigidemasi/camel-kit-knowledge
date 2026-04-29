@@ -1,8 +1,5 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer;
 
-import io.github.luigidemasi.camelkit.knowledge.indexer.domain.DocumentChunk;
-import org.json.JSONObject;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -14,23 +11,32 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import io.github.luigidemasi.camelkit.knowledge.indexer.domain.DocumentChunk;
+
+import org.json.JSONObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
- * Downloads the Apache Camel Catalog JAR from Maven Central and extracts
- * component/EIP metadata as indexable {@link DocumentChunk}s.
+ * Downloads the Apache Camel Catalog JAR from Maven Central and extracts component/EIP metadata as indexable
+ * {@link DocumentChunk}s.
  *
- * <p>Each component JSON is converted to a human-readable text representation
- * listing component properties, endpoint properties, and message headers.
- * Each EIP model JSON is similarly converted with its properties.
+ * <p>
+ * Each component JSON is converted to a human-readable text representation listing component properties, endpoint
+ * properties, and message headers. Each EIP model JSON is similarly converted with its properties.
  */
 public class CamelCatalogIndexer {
 
-    private static final String MAVEN_CENTRAL_URL =
-            "https://repo1.maven.org/maven2/org/apache/camel/camel-catalog/%s/camel-catalog-%s.jar";
+    private static final Logger LOG = LoggerFactory.getLogger(CamelCatalogIndexer.class);
+
+    private static final String MAVEN_CENTRAL_URL
+            = "https://repo1.maven.org/maven2/org/apache/camel/camel-catalog/%s/camel-catalog-%s.jar";
 
     private static final String COMPONENTS_PREFIX = "org/apache/camel/catalog/components/";
     private static final String MODELS_PREFIX = "org/apache/camel/catalog/models/";
@@ -48,12 +54,12 @@ public class CamelCatalogIndexer {
     }
 
     /**
-     * Downloads the camel-catalog JAR (if not cached), extracts component and EIP
-     * JSON files, and converts them to {@link DocumentChunk}s.
+     * Downloads the camel-catalog JAR (if not cached), extracts component and EIP JSON files, and converts them to
+     * {@link DocumentChunk}s.
      *
-     * @param camelTag     the Git tag, e.g. "camel-4.14.6"
-     * @param versionLabel the minor version label, e.g. "4.14"
-     * @return list of document chunks for all components and EIPs
+     * @param  camelTag     the Git tag, e.g. "camel-4.14.6"
+     * @param  versionLabel the minor version label, e.g. "4.14"
+     * @return              list of document chunks for all components and EIPs
      */
     public List<DocumentChunk> indexCatalog(String camelTag, String versionLabel)
             throws IOException, InterruptedException {
@@ -89,7 +95,7 @@ public class CamelCatalogIndexer {
             }
         }
 
-        System.out.printf("Extracted %d components, %d EIPs from catalog%n", componentCount, eipCount);
+        LOG.info("Extracted {} components, {} EIPs from catalog", componentCount, eipCount);
         return chunks;
     }
 
@@ -98,10 +104,10 @@ public class CamelCatalogIndexer {
     /**
      * Builds a {@link DocumentChunk} from a component catalog JSON string.
      *
-     * @param json         the raw JSON content of a component descriptor
-     * @param versionLabel the minor version label, e.g. "4.18"
-     * @param fullVersion  the full version, e.g. "4.18.2"
-     * @return the document chunk, or null if the JSON is malformed
+     * @param  json         the raw JSON content of a component descriptor
+     * @param  versionLabel the minor version label, e.g. "4.18"
+     * @param  fullVersion  the full version, e.g. "4.18.2"
+     * @return              the document chunk, or null if the JSON is malformed
      */
     static DocumentChunk buildComponentChunk(String json, String versionLabel, String fullVersion) {
         try {
@@ -136,7 +142,8 @@ public class CamelCatalogIndexer {
                 for (String headerName : headers.keySet()) {
                     JSONObject header = headers.getJSONObject(headerName);
                     String headerDesc = header.optString("description", "");
-                    if (headerDesc.isEmpty()) continue;
+                    if (headerDesc.isEmpty())
+                        continue;
                     content.append("- ").append(headerName).append(": ").append(headerDesc).append("\n");
                 }
             }
@@ -146,10 +153,9 @@ public class CamelCatalogIndexer {
             return new DocumentChunk(
                     id, "apache-camel", "catalog-component",
                     versionLabel, null, name,
-                    title + " Component Options", content.toString().trim()
-            );
+                    title + " Component Options", content.toString().trim());
         } catch (Exception e) {
-            System.out.printf("  WARN: Failed to parse component JSON: %s%n", e.getMessage());
+            LOG.warn("  Failed to parse component JSON: {}", e.getMessage());
             return null;
         }
     }
@@ -157,10 +163,10 @@ public class CamelCatalogIndexer {
     /**
      * Builds a {@link DocumentChunk} from an EIP model catalog JSON string.
      *
-     * @param json         the raw JSON content of an EIP model descriptor
-     * @param versionLabel the minor version label, e.g. "4.18"
-     * @param fullVersion  the full version, e.g. "4.18.2"
-     * @return the document chunk, or null if the JSON is malformed
+     * @param  json         the raw JSON content of an EIP model descriptor
+     * @param  versionLabel the minor version label, e.g. "4.18"
+     * @param  fullVersion  the full version, e.g. "4.18.2"
+     * @return              the document chunk, or null if the JSON is malformed
      */
     static DocumentChunk buildEipChunk(String json, String versionLabel, String fullVersion) {
         try {
@@ -186,10 +192,9 @@ public class CamelCatalogIndexer {
             return new DocumentChunk(
                     id, "apache-camel", "catalog-eip",
                     versionLabel, null, name,
-                    title + " EIP Options", content.toString().trim()
-            );
+                    title + " EIP Options", content.toString().trim());
         } catch (Exception e) {
-            System.out.printf("  WARN: Failed to parse EIP JSON: %s%n", e.getMessage());
+            LOG.warn("  Failed to parse EIP JSON: {}", e.getMessage());
             return null;
         }
     }
@@ -197,15 +202,15 @@ public class CamelCatalogIndexer {
     // ── Private helpers ─────────────────────────────────────────────────
 
     /**
-     * Appends formatted property entries to the content builder.
-     * Each property is formatted as:
+     * Appends formatted property entries to the content builder. Each property is formatted as:
      * {@code - displayName (type, required): description. Default: value}
      */
     private static void appendProperties(StringBuilder sb, JSONObject properties) {
         for (String propName : properties.keySet()) {
             JSONObject prop = properties.getJSONObject(propName);
             String desc = prop.optString("description", "");
-            if (desc.isEmpty()) continue;
+            if (desc.isEmpty())
+                continue;
 
             String displayName = prop.optString("displayName", propName);
             String type = prop.optString("type", "");
@@ -242,8 +247,8 @@ public class CamelCatalogIndexer {
     /**
      * Downloads the camel-catalog JAR from Maven Central if not already cached.
      *
-     * @param version the Camel version, e.g. "4.14.6"
-     * @return path to the downloaded JAR
+     * @param  version the Camel version, e.g. "4.14.6"
+     * @return         path to the downloaded JAR
      */
     private Path downloadCatalogJar(String version) throws IOException, InterruptedException {
         String[] parts = version.split("\\.");
@@ -264,14 +269,14 @@ public class CamelCatalogIndexer {
 
             if (Files.exists(jarPath)) {
                 if (p != patch) {
-                    System.out.printf("  Using cached %s (latest available for %s)%n", jarName, version);
+                    LOG.info("  Using cached {} (latest available for {})", jarName, version);
                 } else {
-                    System.out.printf("  Using cached %s%n", jarName);
+                    LOG.info("  Using cached {}", jarName);
                 }
                 return jarPath;
             }
 
-            String url = String.format(MAVEN_CENTRAL_URL, tryVersion, tryVersion);
+            String url = String.format(Locale.ROOT, MAVEN_CENTRAL_URL, tryVersion, tryVersion);
 
             // HEAD request first to check availability without downloading
             HttpRequest headRequest = HttpRequest.newBuilder()
@@ -283,7 +288,7 @@ public class CamelCatalogIndexer {
                     HttpResponse.BodyHandlers.discarding());
 
             if (headResponse.statusCode() == 200) {
-                System.out.printf("  Downloading %s%s...%n", jarName,
+                LOG.info("  Downloading {}{}...", jarName,
                         p != patch ? " (latest available for " + version + ")" : "");
 
                 HttpRequest getRequest = HttpRequest.newBuilder()

@@ -1,17 +1,20 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer.asciidoc;
 
-import org.asciidoctor.ast.*;
-import org.asciidoctor.converter.ConverterFor;
-import org.asciidoctor.converter.StringConverter;
-
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.asciidoctor.ast.*;
+import org.asciidoctor.converter.ConverterFor;
+import org.asciidoctor.converter.StringConverter;
+
 /**
  * Custom AsciidoctorJ converter that outputs Markdown instead of HTML.
  *
- * <p>Registered for the {@code "markdown"} backend. Usage:
+ * <p>
+ * Registered for the {@code "markdown"} backend. Usage:
+ *
  * <pre>{@code
  * Asciidoctor asciidoctor = Asciidoctor.Factory.create();
  * asciidoctor.javaConverterRegistry().register(MarkdownConverter.class);
@@ -157,7 +160,7 @@ public class MarkdownConverter extends StringConverter {
         String style = "NOTE";
         Object styleAttr = block.getAttribute("style");
         if (styleAttr != null) {
-            style = styleAttr.toString().toUpperCase();
+            style = styleAttr.toString().toUpperCase(Locale.ROOT);
         }
         String content = cleanInlineHtml(safeGetContent(block));
         return "> **" + style + ":** " + content;
@@ -306,8 +309,7 @@ public class MarkdownConverter extends StringConverter {
     }
 
     /**
-     * Clean inline HTML tags that AsciidoctorJ produces and convert them
-     * to their Markdown equivalents.
+     * Clean inline HTML tags that AsciidoctorJ produces and convert them to their Markdown equivalents.
      */
     static String cleanInlineHtml(String text) {
         if (text == null || text.isEmpty()) {

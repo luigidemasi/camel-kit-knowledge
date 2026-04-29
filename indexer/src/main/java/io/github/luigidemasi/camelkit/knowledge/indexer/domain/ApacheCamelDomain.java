@@ -1,18 +1,5 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer.domain;
 
-import io.github.luigidemasi.camelkit.knowledge.indexer.CamelCatalogIndexer;
-import io.github.luigidemasi.camelkit.knowledge.indexer.GitRepoFetcher;
-import io.github.luigidemasi.camelkit.knowledge.indexer.VersionResolver;
-import io.github.luigidemasi.camelkit.knowledge.indexer.JiraFetcher;
-import io.github.luigidemasi.camelkit.knowledge.indexer.chunker.ReleaseNotesChunker;
-import io.github.luigidemasi.camelkit.knowledge.indexer.chunker.ReleaseNotesChunker.ResolvedIssue;
-import io.github.luigidemasi.camelkit.knowledge.indexer.chunker.SectionChunker;
-import io.github.luigidemasi.camelkit.knowledge.indexer.chunker.SectionChunker.Section;
-import io.github.luigidemasi.camelkit.knowledge.indexer.parser.AsciidocConverter;
-import io.github.luigidemasi.camelkit.knowledge.indexer.parser.CveParser;
-import io.github.luigidemasi.camelkit.knowledge.indexer.parser.CveParser.CveAdvisory;
-import io.github.luigidemasi.camelkit.knowledge.schema.DomainMetadata;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -20,6 +7,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,48 +18,62 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import io.github.luigidemasi.camelkit.knowledge.indexer.CamelCatalogIndexer;
+import io.github.luigidemasi.camelkit.knowledge.indexer.GitRepoFetcher;
+import io.github.luigidemasi.camelkit.knowledge.indexer.JiraFetcher;
+import io.github.luigidemasi.camelkit.knowledge.indexer.VersionResolver;
+import io.github.luigidemasi.camelkit.knowledge.indexer.chunker.ReleaseNotesChunker;
+import io.github.luigidemasi.camelkit.knowledge.indexer.chunker.ReleaseNotesChunker.ResolvedIssue;
+import io.github.luigidemasi.camelkit.knowledge.indexer.chunker.SectionChunker;
+import io.github.luigidemasi.camelkit.knowledge.indexer.chunker.SectionChunker.Section;
+import io.github.luigidemasi.camelkit.knowledge.indexer.parser.AsciidocConverter;
+import io.github.luigidemasi.camelkit.knowledge.indexer.parser.CveParser;
+import io.github.luigidemasi.camelkit.knowledge.indexer.parser.CveParser.CveAdvisory;
+import io.github.luigidemasi.camelkit.knowledge.schema.DomainMetadata;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Apache Camel community documentation domain.
  *
  * Sources:
  * <ul>
- *   <li>apache/camel — component docs, EIP patterns, user manual, migration guides</li>
- *   <li>apache/camel-quarkus — Quarkus extension docs</li>
- *   <li>apache/camel-spring-boot — Spring Boot starter docs</li>
- *   <li>apache/camel-website — release notes and CVE advisories</li>
+ * <li>apache/camel — component docs, EIP patterns, user manual, migration guides</li>
+ * <li>apache/camel-quarkus — Quarkus extension docs</li>
+ * <li>apache/camel-spring-boot — Spring Boot starter docs</li>
+ * <li>apache/camel-website — release notes and CVE advisories</li>
  * </ul>
  *
- * Documents are fetched by cloning Git repos (via JGit), AsciiDoc files are
- * rendered to HTML (via AsciidoctorJ), then chunked by section headings.
- * Release notes are chunked per JIRA issue with optional enrichment.
- * CVE advisories are parsed from Markdown frontmatter with optional NVD enrichment.
+ * Documents are fetched by cloning Git repos (via JGit), AsciiDoc files are rendered to HTML (via AsciidoctorJ), then
+ * chunked by section headings. Release notes are chunked per JIRA issue with optional enrichment. CVE advisories are
+ * parsed from Markdown frontmatter with optional NVD enrichment.
  */
 public class ApacheCamelDomain implements DocumentDomain {
+
+    private static final Logger LOG = LoggerFactory.getLogger(ApacheCamelDomain.class);
 
     // ── Resolved version matrix (populated dynamically in constructor) ──
 
     // ── Repo URLs ───────────────────────────────────────────────────────
 
-    private static final String CAMEL_REPO     = "https://github.com/apache/camel.git";
-    private static final String QUARKUS_REPO   = "https://github.com/apache/camel-quarkus.git";
-    private static final String SPRING_REPO    = "https://github.com/apache/camel-spring-boot.git";
-    private static final String WEBSITE_REPO   = "https://github.com/apache/camel-website.git";
+    private static final String CAMEL_REPO = "https://github.com/apache/camel.git";
+    private static final String QUARKUS_REPO = "https://github.com/apache/camel-quarkus.git";
+    private static final String SPRING_REPO = "https://github.com/apache/camel-spring-boot.git";
+    private static final String WEBSITE_REPO = "https://github.com/apache/camel-website.git";
 
     // ── Release notes version filter ────────────────────────────────────
 
-    private static final Pattern RELEASE_VERSION_PATTERN =
-            Pattern.compile("release-(\\d+)\\.(\\d+)");
+    private static final Pattern RELEASE_VERSION_PATTERN = Pattern.compile("release-(\\d+)\\.(\\d+)");
 
     // ── Component name extraction ───────────────────────────────────────
 
-    private static final Pattern COMPONENT_SUFFIX_PATTERN =
-            Pattern.compile("^(.+)-component$");
+    private static final Pattern COMPONENT_SUFFIX_PATTERN = Pattern.compile("^(.+)-component$");
 
-    private static final Pattern CAMEL_COMPONENT_PATTERN =
-            Pattern.compile("\\bcamel-([a-z][a-z0-9-]+)");
+    private static final Pattern CAMEL_COMPONENT_PATTERN = Pattern.compile("\\bcamel-([a-z][a-z0-9-]+)");
 
-    private static final Pattern THE_COMPONENT_PATTERN =
-            Pattern.compile("\\bthe\\s+([a-z][a-z0-9-]+)\\s+(?:component|extension|endpoint)",
+    private static final Pattern THE_COMPONENT_PATTERN
+            = Pattern.compile("\\bthe\\s+([a-z][a-z0-9-]+)\\s+(?:component|extension|endpoint)",
                     Pattern.CASE_INSENSITIVE);
 
     // ── Fields ──────────────────────────────────────────────────────────
@@ -135,10 +137,9 @@ public class ApacheCamelDomain implements DocumentDomain {
                 "apache_camel",
                 "camel_docs",
                 "Apache Camel documentation — component reference, EIPs, getting started, " +
-                        "migration, release notes, security advisories",
+                              "migration, release notes, security advisories",
                 true,
-                true
-        );
+                true);
     }
 
     // ── buildChunks — the 3-phase pipeline ──────────────────────────────
@@ -147,11 +148,11 @@ public class ApacheCamelDomain implements DocumentDomain {
     public List<DocumentChunk> buildChunks() throws IOException, InterruptedException {
 
         // Phase 1: Clone repos + render AsciiDoc to HTML, chunk into ConvertedDocs
-        System.out.println("Phase 1: Fetching repos and converting AsciiDoc...");
+        LOG.info("Phase 1: Fetching repos and converting AsciiDoc...");
         List<ConvertedDoc> convertedDocs = fetchAndConvertAll();
 
         // Phase 2: Pre-fetch JIRA issues from release notes
-        System.out.println("Phase 2: Pre-fetching JIRA issues...");
+        LOG.info("Phase 2: Pre-fetching JIRA issues...");
         ReleaseNotesChunker releaseNotesChunker = new ReleaseNotesChunker();
         Map<String, ReleaseNotesChunker.ChunkResult> chunkResults = new LinkedHashMap<>();
         Set<String> allJiraIdsToFetch = new LinkedHashSet<>();
@@ -169,7 +170,7 @@ public class ApacheCamelDomain implements DocumentDomain {
         Map<String, JiraFetcher.JiraIssue> jiraCache = new ConcurrentHashMap<>();
         if (!allJiraIdsToFetch.isEmpty()) {
             int parallelism = Integer.parseInt(System.getProperty("jira.parallelism", "4"));
-            System.out.printf("  Fetching %d JIRA issues (%d threads)...%n",
+            LOG.info("  Fetching {} JIRA issues ({} threads)...",
                     allJiraIdsToFetch.size(), parallelism);
             ExecutorService jiraPool = Executors.newFixedThreadPool(parallelism);
             AtomicInteger fetched = new AtomicInteger();
@@ -183,19 +184,19 @@ public class ApacheCamelDomain implements DocumentDomain {
                     }
                     int done = fetched.incrementAndGet();
                     if (done % 100 == 0 || done == total) {
-                        System.out.printf("  JIRA fetch progress: %d/%d%n", done, total);
+                        LOG.info("  JIRA fetch progress: {}/{}", done, total);
                     }
                 });
             }
 
             jiraPool.shutdown();
             jiraPool.awaitTermination(2, TimeUnit.HOURS);
-            System.out.printf("  JIRA fetch complete: %d/%d enriched%n",
+            LOG.info("  JIRA fetch complete: {}/{} enriched",
                     jiraCache.size(), total);
         }
 
         // Phase 3: Build DocumentChunk objects
-        System.out.println("Phase 3: Building document chunks...");
+        LOG.info("Phase 3: Building document chunks...");
         List<DocumentChunk> chunks = new ArrayList<>();
 
         for (ConvertedDoc doc : convertedDocs) {
@@ -206,7 +207,7 @@ public class ApacheCamelDomain implements DocumentDomain {
 
                 for (ResolvedIssue issue : result.issues()) {
                     String primaryId = issue.jiraIds().get(0);
-                    String id = chunkId(doc.version, doc.docType, doc.shortName, primaryId.toLowerCase());
+                    String id = chunkId(doc.version, doc.docType, doc.shortName, primaryId.toLowerCase(Locale.ROOT));
 
                     String content;
                     String component;
@@ -217,7 +218,7 @@ public class ApacheCamelDomain implements DocumentDomain {
                         content = jiraIssue.toEnrichedContent();
                         component = jiraIssue.components().isEmpty()
                                 ? extractComponentName(issue.description())
-                                : jiraIssue.components().get(0).toLowerCase()
+                                : jiraIssue.components().get(0).toLowerCase(Locale.ROOT)
                                         .replaceFirst("^camel-", "");
                         enriched++;
                     } else {
@@ -231,8 +232,7 @@ public class ApacheCamelDomain implements DocumentDomain {
                             issue.sectionTitle() + " — " + primaryId,
                             content,
                             doc.runtimes, allJiraIds,
-                            null, null, null, null, null
-                    ));
+                            null, null, null, null, null));
                 }
 
                 for (Section section : result.otherSections()) {
@@ -245,11 +245,10 @@ public class ApacheCamelDomain implements DocumentDomain {
                             doc.version, null, component,
                             section.title(), section.content(),
                             doc.runtimes, null,
-                            null, null, null, null, null
-                    ));
+                            null, null, null, null, null));
                 }
 
-                System.out.printf("  Chunked %s/%s: %d JIRA issues (%d enriched) + %d sections%n",
+                LOG.info("  Chunked {}/{}: {} JIRA issues ({} enriched) + {} sections",
                         doc.version, doc.shortName, result.issues().size(),
                         enriched, result.otherSections().size());
 
@@ -263,7 +262,8 @@ public class ApacheCamelDomain implements DocumentDomain {
                 for (Section section : sections) {
                     String slug = slugify(section.title());
                     String id = chunkId(doc.version, doc.docType, doc.shortName, slug);
-                    String component = doc.component != null ? doc.component
+                    String component = doc.component != null
+                            ? doc.component
                             : extractComponentName(section.title());
 
                     chunks.add(new DocumentChunk(
@@ -271,11 +271,10 @@ public class ApacheCamelDomain implements DocumentDomain {
                             doc.version, null, component,
                             section.title(), section.content(),
                             doc.runtimes, null,
-                            null, null, null, null, null
-                    ));
+                            null, null, null, null, null));
                 }
 
-                System.out.printf("  Chunked %s/%s (%s): %d sections%n",
+                LOG.info("  Chunked {}/{} ({}): {} sections",
                         doc.version, doc.shortName, doc.docType, sections.size());
             }
         }
@@ -283,17 +282,17 @@ public class ApacheCamelDomain implements DocumentDomain {
         // CVE advisory chunks (version-independent, from camel-website)
         List<DocumentChunk> cveChunks = buildCveChunks(convertedDocs);
         chunks.addAll(cveChunks);
-        System.out.printf("  CVE advisories: %d documents indexed%n", cveChunks.size());
+        LOG.info("  CVE advisories: {} documents indexed", cveChunks.size());
 
         // Phase 4: Index Camel Catalog metadata (component/EIP options)
-        System.out.println("Phase 4: Indexing Camel Catalog metadata...");
+        LOG.info("Phase 4: Indexing Camel Catalog metadata...");
         for (VersionResolver.ResolvedVersion ver : versions) {
             try {
                 List<DocumentChunk> catalogChunks = catalogIndexer.indexCatalog(ver.camelTag(), ver.label());
                 chunks.addAll(catalogChunks);
-                System.out.printf("  %s: %d catalog entries indexed%n", ver.label(), catalogChunks.size());
+                LOG.info("  {}: {} catalog entries indexed", ver.label(), catalogChunks.size());
             } catch (IOException e) {
-                System.out.printf("  WARN: %s: catalog not available (%s)%n", ver.label(), e.getMessage());
+                LOG.warn("  {}: catalog not available ({})", ver.label(), e.getMessage());
             }
         }
 
@@ -322,11 +321,12 @@ public class ApacheCamelDomain implements DocumentDomain {
     /**
      * Fetch all repos and convert AsciiDoc/Markdown to chunked ConvertedDocs.
      *
-     * Downloads all repos in parallel (network-bound), then converts sequentially
-     * (AsciidoctorJ is not thread-safe — single JRuby runtime).
+     * Downloads all repos in parallel (network-bound), then converts sequentially (AsciidoctorJ is not thread-safe —
+     * single JRuby runtime).
      */
     private List<ConvertedDoc> fetchAndConvertAll() throws IOException {
-        record RepoTask(String url, String ref, String localName, boolean isTag) {}
+        record RepoTask(String url, String ref, String localName, boolean isTag) {
+        }
 
         // Build deduplicated task list (website repo already cloned in constructor)
         Map<String, RepoTask> uniqueTasks = new LinkedHashMap<>();
@@ -351,8 +351,7 @@ public class ApacheCamelDomain implements DocumentDomain {
 
         List<RepoTask> tasks = new ArrayList<>(uniqueTasks.values());
         int parallelism = Integer.parseInt(System.getProperty("download.parallelism", "4"));
-        System.out.printf("  Downloading %d repos (%d parallel)...%n", tasks.size(), parallelism);
-        System.out.flush();
+        LOG.info("  Downloading {} repos ({} parallel)...", tasks.size(), parallelism);
 
         Map<String, Path> repoPaths = new ConcurrentHashMap<>();
         List<String> errors = new ArrayList<>();
@@ -369,8 +368,7 @@ public class ApacheCamelDomain implements DocumentDomain {
                     synchronized (errors) {
                         errors.add(task.localName() + ": " + e.getMessage());
                     }
-                    System.out.printf("  ERROR: Failed to download %s: %s%n",
-                            task.localName(), e.getMessage());
+                    LOG.error("  Failed to download {}: {}", task.localName(), e.getMessage());
                 }
             });
         }
@@ -384,12 +382,11 @@ public class ApacheCamelDomain implements DocumentDomain {
         }
 
         long dlElapsed = (System.currentTimeMillis() - dlStart) / 1000;
-        System.out.printf("  All repos downloaded: %d/%d succeeded (%ds)%n",
+        LOG.info("  All repos downloaded: {}/{} succeeded ({}s)",
                 repoPaths.size(), tasks.size(), dlElapsed);
         if (!errors.isEmpty()) {
-            System.out.printf("  WARN: %d repos failed: %s%n", errors.size(), errors);
+            LOG.warn("  {} repos failed: {}", errors.size(), errors);
         }
-        System.out.flush();
 
         // ── Phase 1b: Convert docs sequentially (AsciidoctorJ not thread-safe) ──
         List<ConvertedDoc> docs = new ArrayList<>();
@@ -469,8 +466,8 @@ public class ApacheCamelDomain implements DocumentDomain {
     }
 
     /**
-     * Convert all .adoc files in a directory to ConvertedDocs.
-     * Skips Antora includes (filenames starting with _ or nav).
+     * Convert all .adoc files in a directory to ConvertedDocs. Skips Antora includes (filenames starting with _ or
+     * nav).
      */
     private List<ConvertedDoc> convertAdocDir(Path dir, String version, String docType)
             throws IOException {
@@ -496,11 +493,11 @@ public class ApacheCamelDomain implements DocumentDomain {
                 Path examplesDir = dir.getParent().resolve("examples");
                 String markdown = adocConverter.toMarkdown(file, partialsDir, examplesDir);
 
-                docs.add(new ConvertedDoc(version, baseName, docType, markdown,
+                docs.add(new ConvertedDoc(
+                        version, baseName, docType, markdown,
                         component, runtimes, file));
             } catch (Exception e) {
-                System.out.printf("  WARN: Failed to convert %s: %s (skipping)%n",
-                        file, e.getMessage());
+                LOG.warn("  Failed to convert {}: {} (skipping)", file, e.getMessage());
             }
         }
 
@@ -508,8 +505,7 @@ public class ApacheCamelDomain implements DocumentDomain {
     }
 
     /**
-     * Collect release notes from camel-website (Markdown files).
-     * Filters to versions >= 4.10.
+     * Collect release notes from camel-website (Markdown files). Filters to versions >= 4.10.
      */
     private List<ConvertedDoc> convertReleaseNotes(Path websiteRepo) throws IOException {
         List<ConvertedDoc> docs = new ArrayList<>();
@@ -519,17 +515,20 @@ public class ApacheCamelDomain implements DocumentDomain {
         for (Path file : releaseFiles) {
             String fileName = file.getFileName().toString().replace(".md", "");
             Matcher m = RELEASE_VERSION_PATTERN.matcher(fileName);
-            if (!m.find()) continue;
+            if (!m.find())
+                continue;
 
             int major = Integer.parseInt(m.group(1));
             int minor = Integer.parseInt(m.group(2));
             double ver = major + minor / 100.0;
-            if (ver < minReleaseVersion) continue;
+            if (ver < minReleaseVersion)
+                continue;
 
             String versionLabel = major + "." + minor;
             String markdown = Files.readString(file);
 
-            docs.add(new ConvertedDoc(versionLabel, fileName, "release-notes",
+            docs.add(new ConvertedDoc(
+                    versionLabel, fileName, "release-notes",
                     markdown, null, null, file));
         }
 
@@ -537,9 +536,8 @@ public class ApacheCamelDomain implements DocumentDomain {
     }
 
     /**
-     * Collect CVE advisory files from camel-website for later processing.
-     * These are stored as ConvertedDocs with docType "cve" and processed
-     * separately in buildCveChunks().
+     * Collect CVE advisory files from camel-website for later processing. These are stored as ConvertedDocs with
+     * docType "cve" and processed separately in buildCveChunks().
      */
     private List<ConvertedDoc> collectCveFiles(Path websiteRepo) throws IOException {
         List<ConvertedDoc> docs = new ArrayList<>();
@@ -549,7 +547,8 @@ public class ApacheCamelDomain implements DocumentDomain {
         for (Path file : cveFiles) {
             String fileName = file.getFileName().toString().replace(".md", "");
             String markdown = Files.readString(file);
-            docs.add(new ConvertedDoc(null, fileName, "cve", markdown,
+            docs.add(new ConvertedDoc(
+                    null, fileName, "cve", markdown,
                     null, null, file));
         }
 
@@ -565,20 +564,20 @@ public class ApacheCamelDomain implements DocumentDomain {
         List<DocumentChunk> chunks = new ArrayList<>();
 
         for (ConvertedDoc doc : allDocs) {
-            if (!"cve".equals(doc.docType)) continue;
+            if (!"cve".equals(doc.docType))
+                continue;
 
             try {
                 CveAdvisory cve = CveParser.parse(doc.markdown);
                 if (cve == null || cve.cveId() == null) {
-                    System.out.printf("  WARN: Could not parse CVE from %s (skipping)%n",
-                            doc.shortName);
+                    LOG.warn("  Could not parse CVE from {} (skipping)", doc.shortName);
                     continue;
                 }
 
                 // Enrich with NVD data (best-effort)
                 cve = CveParser.enrichWithNvd(cve, cveCacheDir);
 
-                String id = "apache-camel-cve-" + cve.cveId().toLowerCase();
+                String id = "apache-camel-cve-" + cve.cveId().toLowerCase(Locale.ROOT);
 
                 // Build content
                 StringBuilder content = new StringBuilder();
@@ -624,11 +623,9 @@ public class ApacheCamelDomain implements DocumentDomain {
                         null,       // advisoryType
                         cve.severity(),
                         List.of(cve.cveId()),
-                        cve.fixedVersions().isEmpty() ? null : cve.fixedVersions()
-                ));
+                        cve.fixedVersions().isEmpty() ? null : cve.fixedVersions()));
             } catch (Exception e) {
-                System.out.printf("  WARN: Failed to process CVE %s: %s%n",
-                        doc.shortName, e.getMessage());
+                LOG.warn("  Failed to process CVE {}: {}", doc.shortName, e.getMessage());
             }
         }
 
@@ -638,12 +635,12 @@ public class ApacheCamelDomain implements DocumentDomain {
     // ── Utility methods ─────────────────────────────────────────────────
 
     /**
-     * Extract component name from AsciiDoc filename.
-     * {@code kafka-component.adoc} -> {@code kafka}
+     * Extract component name from AsciiDoc filename. {@code kafka-component.adoc} -> {@code kafka}
      * {@code rest-dsl.adoc} -> {@code rest-dsl}
      */
     static String extractComponentFromFilename(String baseName) {
-        if (baseName == null) return null;
+        if (baseName == null)
+            return null;
         Matcher m = COMPONENT_SUFFIX_PATTERN.matcher(baseName);
         if (m.matches()) {
             return m.group(1);
@@ -655,8 +652,9 @@ public class ApacheCamelDomain implements DocumentDomain {
      * Extract component name from section title, similar to RhBuildCamelDomain.
      */
     private String extractComponentName(String title) {
-        if (title == null) return null;
-        String lower = title.toLowerCase().trim();
+        if (title == null)
+            return null;
+        String lower = title.toLowerCase(Locale.ROOT).trim();
 
         if (lower.startsWith("camel-")) {
             return lower.substring("camel-".length()).replaceAll("[^a-z0-9-]", "");
@@ -673,7 +671,7 @@ public class ApacheCamelDomain implements DocumentDomain {
 
         Matcher theMatcher = THE_COMPONENT_PATTERN.matcher(title);
         if (theMatcher.find()) {
-            return theMatcher.group(1).toLowerCase();
+            return theMatcher.group(1).toLowerCase(Locale.ROOT);
         }
 
         return null;
@@ -683,7 +681,8 @@ public class ApacheCamelDomain implements DocumentDomain {
      * Infer runtime(s) from document type.
      */
     static List<String> inferRuntimes(String docType) {
-        if (docType == null) return null;
+        if (docType == null)
+            return null;
         return switch (docType) {
             case "quarkus-extension" -> List.of("quarkus");
             case "spring-boot-starter" -> List.of("spring-boot");
@@ -707,8 +706,9 @@ public class ApacheCamelDomain implements DocumentDomain {
      * Slugify a string for use in chunk IDs.
      */
     private static String slugify(String text) {
-        if (text == null) return "unknown";
-        return text.toLowerCase().replaceAll("[^a-z0-9]+", "-")
+        if (text == null)
+            return "unknown";
+        return text.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-")
                 .replaceAll("^-|-$", "");
     }
 

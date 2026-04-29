@@ -1,8 +1,8 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer.chunker;
 
-import org.junit.jupiter.api.Test;
-
 import java.util.List;
+
+import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -52,13 +52,14 @@ class ReleaseNotesChunkerTest {
 
     @Test
     void upstreamCamelReferenceExtracted() {
-        String md = """
-                ## Fixed issues
+        String md
+                = """
+                        ## Fixed issues
 
-                | Issue | Description |
-                |-------|-------------|
-                | [CAMEL-22832](https://issues.apache.org/jira/browse/CAMEL-22832) | Backport [CAMEL-22784] fix for HTTP timeout |
-                """;
+                        | Issue | Description |
+                        |-------|-------------|
+                        | [CAMEL-22832](https://issues.apache.org/jira/browse/CAMEL-22832) | Backport [CAMEL-22784] fix for HTTP timeout |
+                        """;
 
         ReleaseNotesChunker.ChunkResult result = chunker.chunk(md);
 
@@ -134,13 +135,14 @@ class ReleaseNotesChunkerTest {
 
     @Test
     void multipleUpstreamReferences() {
-        String md = """
-                ## Fixed issues
+        String md
+                = """
+                        ## Fixed issues
 
-                | Issue | Description |
-                |-------|-------------|
-                | [CAMEL-23000](https://issues.apache.org/jira/browse/CAMEL-23000) | Backport [CAMEL-22832] and [CAMEL-22900] fixes |
-                """;
+                        | Issue | Description |
+                        |-------|-------------|
+                        | [CAMEL-23000](https://issues.apache.org/jira/browse/CAMEL-23000) | Backport [CAMEL-22832] and [CAMEL-22900] fixes |
+                        """;
 
         ReleaseNotesChunker.ChunkResult result = chunker.chunk(md);
 

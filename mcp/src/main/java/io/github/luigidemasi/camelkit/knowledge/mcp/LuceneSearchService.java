@@ -1,12 +1,21 @@
 package io.github.luigidemasi.camelkit.knowledge.mcp;
 
-import io.github.luigidemasi.camelkit.knowledge.embedding.EmbeddingProvider;
-import io.github.luigidemasi.camelkit.knowledge.embedding.OnnxEmbeddingProvider;
-import io.github.luigidemasi.camelkit.knowledge.schema.KnowledgeFields;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.*;
+
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+
+import io.github.luigidemasi.camelkit.knowledge.embedding.EmbeddingProvider;
+import io.github.luigidemasi.camelkit.knowledge.embedding.OnnxEmbeddingProvider;
+import io.github.luigidemasi.camelkit.knowledge.schema.KnowledgeFields;
+
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.index.DirectoryReader;
@@ -16,19 +25,17 @@ import org.apache.lucene.queryparser.classic.ParseException;
 import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.*;
 import org.apache.lucene.store.FSDirectory;
-
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.*;
-import java.nio.file.attribute.BasicFileAttributes;
-import java.util.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- * Embedded Lucene search service that reads the pre-built knowledge index.
- * The index is loaded from classpath resources at startup.
+ * Embedded Lucene search service that reads the pre-built knowledge index. The index is loaded from classpath resources
+ * at startup.
  */
 @ApplicationScoped
 public class LuceneSearchService {
+
+    private static final Logger LOG = LoggerFactory.getLogger(LuceneSearchService.class);
 
     private static final float BM25_WEIGHT = 0.2f;
     private static final float VECTOR_WEIGHT = 0.8f;
@@ -57,7 +64,7 @@ public class LuceneSearchService {
             embeddingProvider = new OnnxEmbeddingProvider();
             embeddingProvider.embed("warmup");
         } catch (Exception e) {
-            System.out.println("WARNING: ONNX embedding model not available, falling back to BM25-only search");
+            LOG.warn("ONNX embedding model not available, falling back to BM25-only search");
             embeddingProvider = null;
         }
     }
@@ -75,7 +82,8 @@ public class LuceneSearchService {
     @PreDestroy
     void close() {
         try {
-            if (reader != null) reader.close();
+            if (reader != null)
+                reader.close();
         } catch (IOException e) {
             // ignore
         }
@@ -127,7 +135,8 @@ public class LuceneSearchService {
             Document doc = reader.document(i);
             if (domainId.equals(doc.get(KnowledgeFields.DOMAIN))) {
                 String meta = doc.get(KnowledgeFields.DOMAIN_META);
-                if (meta != null) return meta;
+                if (meta != null)
+                    return meta;
             }
         }
         return null;
@@ -155,20 +164,22 @@ public class LuceneSearchService {
     /**
      * Full-text search within a domain, using hybrid BM25 + vector scoring when available.
      */
-    public List<SearchResult> search(String domain, String query, String sourceVersion, String targetVersion, int maxResults)
+    public List<SearchResult> search(
+            String domain, String query, String sourceVersion, String targetVersion, int maxResults)
             throws IOException, ParseException {
         return hybridSearch(searcher, embeddingProvider, domain, query, sourceVersion, targetVersion, maxResults,
                 BM25_WEIGHT, VECTOR_WEIGHT);
     }
 
     /**
-     * Hybrid BM25 + vector search. Package-private and static so tests can call it
-     * directly with an in-memory index and embedding provider.
+     * Hybrid BM25 + vector search. Package-private and static so tests can call it directly with an in-memory index and
+     * embedding provider.
      */
-    static List<SearchResult> hybridSearch(IndexSearcher searcher, EmbeddingProvider embeddingProvider,
-                                           String domain, String query, String sourceVersion,
-                                           String targetVersion, int maxResults,
-                                           float bm25Weight, float vectorWeight)
+    static List<SearchResult> hybridSearch(
+            IndexSearcher searcher, EmbeddingProvider embeddingProvider,
+            String domain, String query, String sourceVersion,
+            String targetVersion, int maxResults,
+            float bm25Weight, float vectorWeight)
             throws IOException, ParseException {
 
         StandardAnalyzer analyzer = new StandardAnalyzer();
@@ -179,10 +190,12 @@ public class LuceneSearchService {
         QueryParser parser = new QueryParser(KnowledgeFields.CONTENT, analyzer);
         bm25Builder.add(parser.parse(query), BooleanClause.Occur.MUST);
         if (sourceVersion != null) {
-            bm25Builder.add(new TermQuery(new Term(KnowledgeFields.SOURCE_VERSION, sourceVersion)), BooleanClause.Occur.SHOULD);
+            bm25Builder.add(new TermQuery(new Term(KnowledgeFields.SOURCE_VERSION, sourceVersion)),
+                    BooleanClause.Occur.SHOULD);
         }
         if (targetVersion != null) {
-            bm25Builder.add(new TermQuery(new Term(KnowledgeFields.TARGET_VERSION, targetVersion)), BooleanClause.Occur.SHOULD);
+            bm25Builder.add(new TermQuery(new Term(KnowledgeFields.TARGET_VERSION, targetVersion)),
+                    BooleanClause.Occur.SHOULD);
         }
 
         int fetchSize = maxResults * 3;
@@ -249,8 +262,7 @@ public class LuceneSearchService {
                     runtimes,
                     doc.get(KnowledgeFields.SECTION_TITLE),
                     doc.get(KnowledgeFields.CONTENT),
-                    entry.getValue()
-            ));
+                    entry.getValue()));
         }
 
         return results;
@@ -283,8 +295,9 @@ public class LuceneSearchService {
     /**
      * Search errata with structured filters (advisory type, severity, version) and optional free-text.
      */
-    public List<ErrataSearchResult> searchErrata(String advisoryType, String severity,
-                                                  String version, String freeText, int maxResults)
+    public List<ErrataSearchResult> searchErrata(
+            String advisoryType, String severity,
+            String version, String freeText, int maxResults)
             throws IOException, ParseException {
 
         BooleanQuery.Builder qb = new BooleanQuery.Builder()
@@ -344,8 +357,7 @@ public class LuceneSearchService {
                     doc.get(KnowledgeFields.CONTENT),
                     cveIds != null ? List.of(cveIds) : List.of(),
                     fixedIn != null ? List.of(fixedIn) : List.of(),
-                    scoreDoc.score
-            ));
+                    scoreDoc.score));
         }
 
         return results;
@@ -368,35 +380,32 @@ public class LuceneSearchService {
                     runtimes,
                     doc.get(KnowledgeFields.SECTION_TITLE),
                     doc.get(KnowledgeFields.CONTENT),
-                    scoreDoc.score
-            ));
+                    scoreDoc.score));
         }
 
         return results;
     }
 
     /**
-     * Resolve the knowledge index. Tries IndexResolver first (Maven artifact download),
-     * falls back to classpath extraction for backward compatibility.
+     * Resolve the knowledge index. Tries IndexResolver first (Maven artifact download), falls back to classpath
+     * extraction for backward compatibility.
      */
     private Path resolveIndex() throws IOException {
         // Try IndexResolver (downloads from Maven repo)
         try {
             Path resolved = indexResolver.resolve();
-            System.out.printf("LuceneSearchService: IndexResolver succeeded, path = %s%n", resolved);
+            LOG.info("LuceneSearchService: IndexResolver succeeded, path = {}", resolved);
             String[] files = resolved.toFile().list();
-            System.out.printf("LuceneSearchService: extracted %d files%n",
-                    files != null ? files.length : 0);
+            LOG.info("LuceneSearchService: extracted {} files", files != null ? files.length : 0);
             return resolved;
         } catch (IndexResolver.IndexResolverException e) {
-            System.out.println("WARNING: IndexResolver failed (" + e.getMessage() +
-                    "), falling back to classpath extraction");
+            LOG.warn("IndexResolver failed ({}), falling back to classpath extraction", e.getMessage());
         }
 
         // Fallback: extract from classpath (legacy — index bundled in uber-jar)
         Path classpath = extractIndexFromClasspath();
         String[] files = classpath.toFile().list();
-        System.out.printf("LuceneSearchService: classpath fallback, path = %s, files = %d%n",
+        LOG.info("LuceneSearchService: classpath fallback, path = {}, files = {}",
                 classpath, files != null ? files.length : 0);
         return classpath;
     }
@@ -410,7 +419,7 @@ public class LuceneSearchService {
         List<String> indexFiles;
         try (InputStream manifestIs = cl.getResourceAsStream("knowledge-index/INDEX_FILES")) {
             if (manifestIs != null) {
-                indexFiles = new String(manifestIs.readAllBytes()).lines()
+                indexFiles = new String(manifestIs.readAllBytes(), StandardCharsets.UTF_8).lines()
                         .filter(l -> !l.isBlank())
                         .toList();
             } else {
@@ -442,8 +451,8 @@ public class LuceneSearchService {
             List<String> runtimes,
             String sectionTitle,
             String content,
-            float score
-    ) {}
+            float score) {
+    }
 
     /**
      * Errata-specific search result with structured fields.
@@ -457,6 +466,6 @@ public class LuceneSearchService {
             String content,
             List<String> cveIds,
             List<String> fixedInVersions,
-            float score
-    ) {}
+            float score) {
+    }
 }

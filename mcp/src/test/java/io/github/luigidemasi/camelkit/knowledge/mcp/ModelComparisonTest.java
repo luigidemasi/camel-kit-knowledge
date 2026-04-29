@@ -1,21 +1,5 @@
 package io.github.luigidemasi.camelkit.knowledge.mcp;
 
-import ai.djl.huggingface.tokenizers.Encoding;
-import ai.djl.huggingface.tokenizers.HuggingFaceTokenizer;
-import ai.onnxruntime.*;
-import io.github.luigidemasi.camelkit.knowledge.embedding.EmbeddingProvider;
-import io.github.luigidemasi.camelkit.knowledge.embedding.OnnxEmbeddingProvider;
-import io.github.luigidemasi.camelkit.knowledge.schema.KnowledgeDocument;
-import org.apache.lucene.analysis.standard.StandardAnalyzer;
-import org.apache.lucene.index.DirectoryReader;
-import org.apache.lucene.index.IndexWriter;
-import org.apache.lucene.index.IndexWriterConfig;
-import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.store.ByteBuffersDirectory;
-import org.apache.lucene.store.Directory;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -31,10 +15,27 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
+import io.github.luigidemasi.camelkit.knowledge.embedding.EmbeddingProvider;
+import io.github.luigidemasi.camelkit.knowledge.embedding.OnnxEmbeddingProvider;
+import io.github.luigidemasi.camelkit.knowledge.schema.KnowledgeDocument;
+
+import ai.djl.huggingface.tokenizers.Encoding;
+import ai.djl.huggingface.tokenizers.HuggingFaceTokenizer;
+import ai.onnxruntime.*;
+import org.apache.lucene.analysis.standard.StandardAnalyzer;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.IndexWriter;
+import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.store.ByteBuffersDirectory;
+import org.apache.lucene.store.Directory;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+
 /**
- * Empirical comparison of embedding models using real indexer documents.
- * Loads markdown files from the indexer resources, chunks them with SectionChunker logic,
- * builds indexes with each model, and evaluates search quality with realistic queries.
+ * Empirical comparison of embedding models using real indexer documents. Loads markdown files from the indexer
+ * resources, chunks them with SectionChunker logic, builds indexes with each model, and evaluates search quality with
+ * realistic queries.
  *
  * Run with: mvn test -pl camel-kit-knowledge/mcp -Dmodel.comparison=true -Dtest=ModelComparisonTest
  */
@@ -48,13 +49,13 @@ class ModelComparisonTest {
     // Boilerplate section titles to skip
     private static final Set<String> SKIP_TITLES = Set.of(
             "Introduction", "Legal Notice", "Preface",
-            "Learn", "Communities", "Theme"
-    );
+            "Learn", "Communities", "Theme");
 
     // --- Model configurations ---
 
     record ModelConfig(String name, String repo, String[] onnxFiles, String tokenizerFile,
-                       int dimensions, int maxSeqLength) {}
+            int dimensions, int maxSeqLength) {
+    }
 
     static final ModelConfig GRANITE_SMALL = new ModelConfig(
             "granite-small-r2 (Q8, 384d)",
@@ -74,8 +75,11 @@ class ModelComparisonTest {
     // Each query targets a specific document file. The "expectedFile" is the basename (without .md)
     // of the source file that should appear in the top results.
 
-    record EvalQuery(String query, String expectedFile, String type) {}
-    record QueryResult(int rank, float score, String topResultTitle) {}
+    record EvalQuery(String query, String expectedFile, String type) {
+    }
+
+    record QueryResult(int rank, float score, String topResultTitle) {
+    }
 
     static final List<EvalQuery> QUERIES = List.of(
             // Keyword-heavy queries (terms that appear literally in the documents)
@@ -98,12 +102,12 @@ class ModelComparisonTest {
             new EvalQuery("Quarkus native compilation for Camel", "developing-quarkus", "mixed"),
             new EvalQuery("Spring Boot starter for CXF SOAP services", "spring-boot-reference", "mixed"),
             new EvalQuery("Camel health checks and readiness probes", "camel-migration", "mixed"),
-            new EvalQuery("Kamelet custom connector reusable", "kamelets-reference", "mixed")
-    );
+            new EvalQuery("Kamelet custom connector reusable", "kamelets-reference", "mixed"));
 
     // --- Chunk record ---
 
-    record DocChunk(String id, String sourceFile, String sectionTitle, String content) {}
+    record DocChunk(String id, String sourceFile, String sectionTitle, String content) {
+    }
 
     // --- Main comparison test ---
 
@@ -162,11 +166,13 @@ class ModelComparisonTest {
     private Path resolveIndexerResources() {
         // Try relative to MCP module (Maven test cwd)
         Path fromMcp = Path.of("../indexer/src/main/resources/apache-camel");
-        if (Files.isDirectory(fromMcp)) return fromMcp;
+        if (Files.isDirectory(fromMcp))
+            return fromMcp;
 
         // Try from project root
         Path fromRoot = Path.of("camel-kit-knowledge/indexer/src/main/resources/apache-camel");
-        if (Files.isDirectory(fromRoot)) return fromRoot;
+        if (Files.isDirectory(fromRoot))
+            return fromRoot;
 
         throw new RuntimeException("Cannot find indexer resources. Run from MCP module or project root.");
     }
@@ -177,12 +183,12 @@ class ModelComparisonTest {
         // Load markdown files from version 4.14 (latest) + 4.8 + KB articles
         List<Path> versionDirs = List.of(
                 resourcesDir.resolve("4.14"),
-                resourcesDir.resolve("4.8")
-        );
+                resourcesDir.resolve("4.8"));
         Path kbDir = resourcesDir.resolve("kb-articles");
 
         for (Path versionDir : versionDirs) {
-            if (!Files.isDirectory(versionDir)) continue;
+            if (!Files.isDirectory(versionDir))
+                continue;
             String version = versionDir.getFileName().toString();
             try (Stream<Path> mdFiles = Files.list(versionDir).filter(p -> p.toString().endsWith(".md"))) {
                 mdFiles.forEach(mdFile -> {
@@ -244,11 +250,13 @@ class ModelComparisonTest {
     private String cleanTitle(String title) {
         // Remove "[... Copy link](#...)" suffix from docs
         int copyLink = title.indexOf(" Copy link");
-        if (copyLink > 0) title = title.substring(0, copyLink);
+        if (copyLink > 0)
+            title = title.substring(0, copyLink);
         // Remove leading "[" and trailing "](#...)"
         if (title.startsWith("[")) {
             int closeBracket = title.indexOf(']');
-            if (closeBracket > 0) title = title.substring(1, closeBracket);
+            if (closeBracket > 0)
+                title = title.substring(1, closeBracket);
         }
         return title.trim();
     }
@@ -304,9 +312,8 @@ class ModelComparisonTest {
         QueryResult[] results = new QueryResult[QUERIES.size()];
         for (int qi = 0; qi < QUERIES.size(); qi++) {
             EvalQuery eq = QUERIES.get(qi);
-            List<LuceneSearchService.SearchResult> searchResults =
-                    LuceneSearchService.hybridSearch(searcher, provider,
-                            "apache_camel", eq.query(), null, null, 10, 0.2f, 0.8f);
+            List<LuceneSearchService.SearchResult> searchResults = LuceneSearchService.hybridSearch(searcher, provider,
+                    "apache_camel", eq.query(), null, null, 10, 0.2f, 0.8f);
 
             int rank = 0;
             float score = 0;
@@ -392,7 +399,8 @@ class ModelComparisonTest {
             for (ModelResult mr : allResults) {
                 int hits = 0;
                 for (int qi : indices) {
-                    if (mr.results[qi].rank() == 1) hits++;
+                    if (mr.results[qi].rank() == 1)
+                        hits++;
                 }
                 System.out.printf("  %-" + col + "s", hits + "/" + indices.size());
             }
@@ -404,7 +412,8 @@ class ModelComparisonTest {
                 int hits = 0;
                 for (int qi : indices) {
                     int r = mr.results[qi].rank();
-                    if (r >= 1 && r <= 3) hits++;
+                    if (r >= 1 && r <= 3)
+                        hits++;
                 }
                 System.out.printf("  %-" + col + "s", hits + "/" + indices.size());
             }
@@ -415,7 +424,8 @@ class ModelComparisonTest {
             for (ModelResult mr : allResults) {
                 int nf = 0;
                 for (int qi : indices) {
-                    if (mr.results[qi].rank() == 0) nf++;
+                    if (mr.results[qi].rank() == 0)
+                        nf++;
                 }
                 System.out.printf("  %-" + col + "d", nf);
             }
@@ -454,7 +464,8 @@ class ModelComparisonTest {
     }
 
     private String truncate(String s, int max) {
-        if (s == null) return "N/A";
+        if (s == null)
+            return "N/A";
         return s.length() > max ? s.substring(0, max - 3) + "..." : s;
     }
 
@@ -510,7 +521,11 @@ class ModelComparisonTest {
     private long dirSizeMB(Path dir) throws IOException {
         try (var stream = Files.walk(dir)) {
             long bytes = stream.filter(Files::isRegularFile).mapToLong(p -> {
-                try { return Files.size(p); } catch (IOException e) { return 0; }
+                try {
+                    return Files.size(p);
+                } catch (IOException e) {
+                    return 0;
+                }
             }).sum();
             return bytes / (1024 * 1024);
         }
@@ -532,7 +547,7 @@ class ModelComparisonTest {
         private final boolean needsTokenTypeIds;
 
         FileBasedEmbeddingProvider(Path modelDir, String modelFile, int dimensions, int maxSeqLength)
-                throws Exception {
+                                                                                                      throws Exception {
             this.dimensions = dimensions;
             this.maxSeqLength = maxSeqLength;
 
@@ -541,8 +556,7 @@ class ModelComparisonTest {
                 tokenizer = HuggingFaceTokenizer.newInstance(is, Map.of(
                         "padding", "false",
                         "truncation", "true",
-                        "maxLength", String.valueOf(maxSeqLength)
-                ));
+                        "maxLength", String.valueOf(maxSeqLength)));
             }
 
             env = OrtEnvironment.getEnvironment();
@@ -597,7 +611,8 @@ class ModelComparisonTest {
                 } finally {
                     inputIdsTensor.close();
                     attentionMaskTensor.close();
-                    if (tokenTypeIdsTensor != null) tokenTypeIdsTensor.close();
+                    if (tokenTypeIdsTensor != null)
+                        tokenTypeIdsTensor.close();
                 }
 
             } catch (OrtException e) {
@@ -631,17 +646,20 @@ class ModelComparisonTest {
 
         private float[] l2Normalize(float[] vector) {
             float norm = 0;
-            for (float v : vector) norm += v * v;
+            for (float v : vector)
+                norm += v * v;
             norm = (float) Math.sqrt(norm);
             if (norm > 0) {
-                for (int i = 0; i < vector.length; i++) vector[i] /= norm;
+                for (int i = 0; i < vector.length; i++)
+                    vector[i] /= norm;
             }
             return vector;
         }
 
         @Override
         public void close() throws Exception {
-            if (session != null) session.close();
+            if (session != null)
+                session.close();
         }
     }
 }

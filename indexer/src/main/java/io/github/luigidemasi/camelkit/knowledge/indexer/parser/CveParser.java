@@ -9,32 +9,33 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
- * Parses Apache Camel CVE advisories from Markdown files with YAML frontmatter.
- * Optionally enriches with NVD data (CVSS score, CWE classification).
+ * Parses Apache Camel CVE advisories from Markdown files with YAML frontmatter. Optionally enriches with NVD data (CVSS
+ * score, CWE classification).
  */
 public class CveParser {
 
-    private static final Pattern FRONTMATTER_PATTERN =
-            Pattern.compile("^---\\s*\\n(.*?)\\n---", Pattern.DOTALL);
+    private static final Logger LOG = LoggerFactory.getLogger(CveParser.class);
 
-    private static final Pattern JIRA_PATTERN =
-            Pattern.compile("\\b(CAMEL-\\d+)\\b");
+    private static final Pattern FRONTMATTER_PATTERN = Pattern.compile("^---\\s*\\n(.*?)\\n---", Pattern.DOTALL);
 
-    private static final Pattern VERSION_RANGE_PATTERN =
-            Pattern.compile("[Ff]rom\\s+([\\d.]+)\\s+before\\s+([\\d.]+)");
+    private static final Pattern JIRA_PATTERN = Pattern.compile("\\b(CAMEL-\\d+)\\b");
 
-    private static final Pattern CAMEL_COMPONENT_PATTERN =
-            Pattern.compile("\\bcamel-([a-z][a-z0-9-]+)");
+    private static final Pattern VERSION_RANGE_PATTERN = Pattern.compile("[Ff]rom\\s+([\\d.]+)\\s+before\\s+([\\d.]+)");
 
-    private static final Pattern THE_COMPONENT_PATTERN =
-            Pattern.compile("\\b[Cc]amel\\s+([A-Z][a-zA-Z]+)\\s+(?:component|extension)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern CAMEL_COMPONENT_PATTERN = Pattern.compile("\\bcamel-([a-z][a-z0-9-]+)");
 
-    private static final String NVD_API_URL =
-            "https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=";
+    private static final Pattern THE_COMPONENT_PATTERN
+            = Pattern.compile("\\b[Cc]amel\\s+([A-Z][a-zA-Z]+)\\s+(?:component|extension)", Pattern.CASE_INSENSITIVE);
+
+    private static final String NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=";
 
     public record CveAdvisory(
             String cveId,
@@ -52,8 +53,8 @@ public class CveParser {
             // NVD enrichment (nullable)
             String cvssScore,
             String cvssVector,
-            String cweId
-    ) {}
+            String cweId) {
+    }
 
     /**
      * Parse a CVE advisory from Markdown content with YAML frontmatter.
@@ -81,7 +82,8 @@ public class CveParser {
         if (fixed != null) {
             for (String v : fixed.replace(" and ", ", ").split(",\\s*")) {
                 String trimmed = v.trim();
-                if (!trimmed.isEmpty()) fixedVersions.add(trimmed);
+                if (!trimmed.isEmpty())
+                    fixedVersions.add(trimmed);
             }
         }
 
@@ -103,7 +105,8 @@ public class CveParser {
         String publishedDate = dateStr != null && dateStr.length() >= 10
                 ? dateStr.substring(0, 10) : null;
 
-        return new CveAdvisory(cveId, severity, summary, description, affected,
+        return new CveAdvisory(
+                cveId, severity, summary, description, affected,
                 fixedVersions, affectedVersions, component, jiraIds, publishedDate,
                 mitigation, body, null, null, null);
     }
@@ -119,7 +122,8 @@ public class CveParser {
      * Enrich a CveAdvisory with NVD data. Best-effort — returns original if NVD unavailable.
      */
     public static CveAdvisory enrichWithNvd(CveAdvisory cve, Path cacheDir) {
-        if (cve == null || cve.cveId() == null) return cve;
+        if (cve == null || cve.cveId() == null)
+            return cve;
 
         Path cacheFile = cacheDir.resolve(cve.cveId() + ".json");
 
@@ -138,12 +142,13 @@ public class CveParser {
                         .header("Accept", "application/json")
                         .build();
                 HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-                if (response.statusCode() != 200) return cve;
+                if (response.statusCode() != 200)
+                    return cve;
                 json = response.body();
                 Files.createDirectories(cacheDir);
                 Files.writeString(cacheFile, json);
             } catch (Exception e) {
-                System.out.printf("  WARN: NVD lookup failed for %s: %s%n", cve.cveId(), e.getMessage());
+                LOG.warn("  NVD lookup failed for {}: {}", cve.cveId(), e.getMessage());
                 return cve;
             }
         }
@@ -153,7 +158,8 @@ public class CveParser {
         String cvssVector = extractJsonValue(json, "vectorString");
         String cweId = extractCweFromNvd(json);
 
-        return new CveAdvisory(cve.cveId(), cve.severity(), cve.summary(), cve.description(),
+        return new CveAdvisory(
+                cve.cveId(), cve.severity(), cve.summary(), cve.description(),
                 cve.affected(), cve.fixedVersions(), cve.affectedVersions(), cve.affectedComponent(),
                 cve.jiraIds(), cve.publishedDate(), cve.mitigation(), cve.body(),
                 cvssScore, cvssVector, cweId);
@@ -163,15 +169,18 @@ public class CveParser {
      * Extract component name from CVE summary/description text.
      */
     public static String extractComponent(String text) {
-        if (text == null) return null;
+        if (text == null)
+            return null;
 
         // Pattern 1: "camel-xyz"
-        Matcher m1 = CAMEL_COMPONENT_PATTERN.matcher(text.toLowerCase());
-        if (m1.find()) return m1.group(1);
+        Matcher m1 = CAMEL_COMPONENT_PATTERN.matcher(text.toLowerCase(Locale.ROOT));
+        if (m1.find())
+            return m1.group(1);
 
         // Pattern 2: "Camel XYZ component/extension"
         Matcher m2 = THE_COMPONENT_PATTERN.matcher(text);
-        if (m2.find()) return m2.group(1).toLowerCase();
+        if (m2.find())
+            return m2.group(1).toLowerCase(Locale.ROOT);
 
         return null;
     }
@@ -181,7 +190,8 @@ public class CveParser {
      */
     public static List<String> parseAffectedVersions(String affected) {
         List<String> ranges = new ArrayList<>();
-        if (affected == null) return ranges;
+        if (affected == null)
+            return ranges;
         Matcher m = VERSION_RANGE_PATTERN.matcher(affected);
         while (m.find()) {
             ranges.add(m.group(1) + "-" + m.group(2));

@@ -1,31 +1,35 @@
 package io.github.luigidemasi.camelkit.knowledge.mcp;
 
-import io.github.luigidemasi.camelkit.knowledge.embedding.EmbeddingProvider;
-import io.quarkus.test.junit.QuarkusTest;
+import java.util.ArrayList;
+import java.util.List;
+
 import jakarta.inject.Inject;
+
+import io.github.luigidemasi.camelkit.knowledge.embedding.EmbeddingProvider;
+
+import io.quarkus.test.junit.QuarkusTest;
 import org.apache.lucene.search.IndexSearcher;
 import org.jboss.logging.Logger;
 import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
-import java.util.List;
-
 /**
- * Evaluation test that compares BM25/vector weight ratios against the real
- * production Lucene index using human-curated ground truth.
+ * Evaluation test that compares BM25/vector weight ratios against the real production Lucene index using human-curated
+ * ground truth.
  *
  * <h3>Workflow</h3>
  * <ol>
- *   <li>Run {@link #dumpSearchResults()} to see top results for each query across all weight configs</li>
- *   <li>Manually review the dump and pick the best document ID for each query</li>
- *   <li>Set the {@code expectedId} in {@link #buildQueries()} for each query</li>
- *   <li>Run {@link #evaluateWeightRatios()} for unbiased evaluation against the curated ground truth</li>
+ * <li>Run {@link #dumpSearchResults()} to see top results for each query across all weight configs</li>
+ * <li>Manually review the dump and pick the best document ID for each query</li>
+ * <li>Set the {@code expectedId} in {@link #buildQueries()} for each query</li>
+ * <li>Run {@link #evaluateWeightRatios()} for unbiased evaluation against the curated ground truth</li>
  * </ol>
  *
  * <h3>When to re-run the dump</h3>
- * <p>Document IDs are deterministic ({@code apache-camel-{version}-{shortName}-{chunkIndex}}),
- * so they only change when source documents are added/removed or chunking logic changes.
- * After such changes, re-run {@code dumpSearchResults} and update the expected IDs.</p>
+ * <p>
+ * Document IDs are deterministic ({@code apache-camel-{version}-{shortName}-{chunkIndex}}), so they only change when
+ * source documents are added/removed or chunking logic changes. After such changes, re-run {@code dumpSearchResults}
+ * and update the expected IDs.
+ * </p>
  */
 @QuarkusTest
 class WeightEvaluationTest {
@@ -35,61 +39,76 @@ class WeightEvaluationTest {
     @Inject
     LuceneSearchService searchService;
 
-    record EvalQuery(String query, String description, String expectedId) {}
+    record EvalQuery(String query, String description, String expectedId) {
+    }
 
-    record WeightConfig(float bm25Weight, float vectorWeight, String label) {}
+    record WeightConfig(float bm25Weight, float vectorWeight, String label) {
+    }
 
     record QueryResult(String expectedId, int rank, float score,
-                       List<ResultSnippet> top3) {}
+            List<ResultSnippet> top3) {
+    }
 
-    record ResultSnippet(String id, String title, float score) {}
+    record ResultSnippet(String id, String title, float score) {
+    }
 
     /**
      * Shared query definitions with human-curated expected document IDs.
      *
-     * To curate: run {@link #dumpSearchResults()}, review the output, and set
-     * the expectedId to the most relevant document for each query. Set to
-     * {@code null} for queries that don't have a clear "right" answer (e.g., garbage queries).
+     * To curate: run {@link #dumpSearchResults()}, review the output, and set the expectedId to the most relevant
+     * document for each query. Set to {@code null} for queries that don't have a clear "right" answer (e.g., garbage
+     * queries).
      */
     private static List<EvalQuery> buildQueries() {
         return List.of(
-                new EvalQuery("camel-http component configuration",
+                new EvalQuery(
+                        "camel-http component configuration",
                         "Keyword: exact component name",
                         null),  // TODO: curate after running dumpSearchResults
-                new EvalQuery("how to set up a REST API with Camel on Quarkus",
+                new EvalQuery(
+                        "how to set up a REST API with Camel on Quarkus",
                         "Semantic: natural language question",
                         null),
-                new EvalQuery("MSA to MSA migration Spring Boot to Quarkus",
+                new EvalQuery(
+                        "MSA to MSA migration Spring Boot to Quarkus",
                         "Semantic: paraphrase of migration path",
                         null),
-                new EvalQuery("CVE-2025-27636 camel-bean header injection",
+                new EvalQuery(
+                        "CVE-2025-27636 camel-bean header injection",
                         "Keyword: CVE ID + component",
                         null),
-                new EvalQuery("which JDK versions are supported",
+                new EvalQuery(
+                        "which JDK versions are supported",
                         "Semantic: supported configurations",
                         null),
-                new EvalQuery("camel-kafka MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA",
+                new EvalQuery(
+                        "camel-kafka MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA",
                         "Keyword: exact component + noise",
                         null),
-                new EvalQuery("MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA",
+                new EvalQuery(
+                        "MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA",
                         "Garbage: no meaningful content",
                         null),  // intentionally null — no correct answer for garbage
-                new EvalQuery("MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA",
+                new EvalQuery(
+                        "MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA MSA",
                         "Garbage: lots of noise, tests robustness",
                         null),  // intentionally null
-                new EvalQuery("database connection pooling configuration for PostgreSQL",
+                new EvalQuery(
+                        "database connection pooling configuration for PostgreSQL",
                         "Semantic: infrastructure question",
                         null),
-                new EvalQuery("RHSA security advisory critical vulnerability",
+                new EvalQuery(
+                        "RHSA security advisory critical vulnerability",
                         "Keyword: errata terminology",
                         null),
-                new EvalQuery("how to handle errors and retries in a route",
+                new EvalQuery(
+                        "how to handle errors and retries in a route",
                         "Semantic: error handling pattern",
                         null),
-                new EvalQuery("release notes 4.14",
+                new EvalQuery(
+                        "release notes 4.14",
                         "Keyword: release notes for specific version",
-                        null)
-        );
+                        null));
     }
 
     private static List<WeightConfig> buildWeightConfigs() {
@@ -100,14 +119,13 @@ class WeightEvaluationTest {
                 new WeightConfig(0.4f, 0.6f, "BM25 40/Vec 60"),
                 new WeightConfig(0.3f, 0.7f, "BM25 30/Vec 70"),
                 new WeightConfig(0.2f, 0.8f, "BM25 20/Vec 80"),
-                new WeightConfig(0.0f, 1.0f, "Vec 100")
-        );
+                new WeightConfig(0.0f, 1.0f, "Vec 100"));
     }
 
     /**
-     * Discovery tool — run this first to see what the index returns for each query
-     * across all weight configurations. Review the output and pick the best document
-     * ID for each query, then set it as the expectedId in {@link #buildQueries()}.
+     * Discovery tool — run this first to see what the index returns for each query across all weight configurations.
+     * Review the output and pick the best document ID for each query, then set it as the expectedId in
+     * {@link #buildQueries()}.
      *
      * Run with: mvn test -pl mcp -Dtest=WeightEvaluationTest#dumpSearchResults
      */
@@ -135,8 +153,8 @@ class WeightEvaluationTest {
             sb.append('\n');
 
             for (WeightConfig wc : configs) {
-                List<LuceneSearchService.SearchResult> searchResults =
-                        LuceneSearchService.hybridSearch(searcher, embeddingProvider,
+                List<LuceneSearchService.SearchResult> searchResults
+                        = LuceneSearchService.hybridSearch(searcher, embeddingProvider,
                                 "apache_camel", eq.query(), null, null, 5,
                                 wc.bm25Weight(), wc.vectorWeight());
 
@@ -161,8 +179,8 @@ class WeightEvaluationTest {
     }
 
     /**
-     * Unbiased weight evaluation using human-curated ground truth.
-     * Queries with null expectedId are skipped (garbage queries, or not yet curated).
+     * Unbiased weight evaluation using human-curated ground truth. Queries with null expectedId are skipped (garbage
+     * queries, or not yet curated).
      *
      * Run with: mvn test -pl mcp -Dtest=WeightEvaluationTest#evaluateWeightRatios
      */
@@ -179,7 +197,8 @@ class WeightEvaluationTest {
                 .toList();
 
         if (queries.isEmpty()) {
-            LOG.warn("No curated queries found. Run dumpSearchResults first, then set expectedId values in buildQueries().");
+            LOG.warn(
+                    "No curated queries found. Run dumpSearchResults first, then set expectedId values in buildQueries().");
             return;
         }
 
@@ -190,8 +209,8 @@ class WeightEvaluationTest {
 
             for (int ci = 0; ci < configs.size(); ci++) {
                 WeightConfig wc = configs.get(ci);
-                List<LuceneSearchService.SearchResult> searchResults =
-                        LuceneSearchService.hybridSearch(searcher, embeddingProvider,
+                List<LuceneSearchService.SearchResult> searchResults
+                        = LuceneSearchService.hybridSearch(searcher, embeddingProvider,
                                 "apache_camel", eq.query(), null, null, 10,
                                 wc.bm25Weight(), wc.vectorWeight());
 
@@ -269,7 +288,8 @@ class WeightEvaluationTest {
         for (int ci = 0; ci < configs.size(); ci++) {
             int hits = 0;
             for (int qi = 0; qi < numQueries; qi++) {
-                if (results[qi][ci].rank() == 1) hits++;
+                if (results[qi][ci].rank() == 1)
+                    hits++;
             }
             sb.append(String.format("  %-" + col + "s", hits + "/" + numQueries));
         }
@@ -280,7 +300,8 @@ class WeightEvaluationTest {
             int hits = 0;
             for (int qi = 0; qi < numQueries; qi++) {
                 int rank = results[qi][ci].rank();
-                if (rank >= 1 && rank <= 3) hits++;
+                if (rank >= 1 && rank <= 3)
+                    hits++;
             }
             sb.append(String.format("  %-" + col + "s", hits + "/" + numQueries));
         }
@@ -291,7 +312,8 @@ class WeightEvaluationTest {
             int worst = 0;
             for (int qi = 0; qi < numQueries; qi++) {
                 int rank = results[qi][ci].rank();
-                if (rank == 0) rank = 11;
+                if (rank == 0)
+                    rank = 11;
                 worst = Math.max(worst, rank);
             }
             sb.append(String.format("  %-" + col + "d", worst));

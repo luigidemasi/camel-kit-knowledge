@@ -1,14 +1,15 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer;
 
-import io.github.luigidemasi.camelkit.knowledge.indexer.VersionResolver.CamelRelease;
-import io.github.luigidemasi.camelkit.knowledge.indexer.VersionResolver.QuarkusMapping;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.List;
+
+import io.github.luigidemasi.camelkit.knowledge.indexer.VersionResolver.CamelRelease;
+import io.github.luigidemasi.camelkit.knowledge.indexer.VersionResolver.QuarkusMapping;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -211,8 +212,7 @@ class VersionResolverTest {
         List<String> tags = List.of(
                 "camel-4.14.0", "camel-4.14.1", "camel-4.14.2", "camel-4.14.3",
                 "camel-4.10.0", "camel-4.10.1",
-                "camel-4.18.0"
-        );
+                "camel-4.18.0");
 
         String latest = VersionResolver.findLatestTag(tags, "camel-", "4.14");
         assertEquals("camel-4.14.3", latest);
@@ -232,8 +232,7 @@ class VersionResolverTest {
         List<String> springTags = List.of(
                 "camel-spring-boot-4.14.0", "camel-spring-boot-4.14.1",
                 "camel-spring-boot-4.14.2",
-                "camel-spring-boot-4.10.0"
-        );
+                "camel-spring-boot-4.10.0");
 
         String latestSpring = VersionResolver.findLatestTag(springTags, "camel-spring-boot-", "4.14");
         assertEquals("camel-spring-boot-4.14.2", latestSpring);
@@ -241,8 +240,7 @@ class VersionResolverTest {
         // Quarkus tags have no prefix (just version numbers)
         List<String> quarkusTags = List.of(
                 "3.27.0", "3.27.1", "3.27.2",
-                "3.33.0", "3.33.1"
-        );
+                "3.33.0", "3.33.1");
 
         String latestQuarkus = VersionResolver.findLatestTag(quarkusTags, "", "3.27");
         assertEquals("3.27.2", latestQuarkus);

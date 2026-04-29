@@ -1,40 +1,48 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer.asciidoc;
 
-import org.asciidoctor.ast.Document;
-import org.asciidoctor.extension.IncludeProcessor;
-import org.asciidoctor.extension.PreprocessorReader;
-import org.json.JSONObject;
-
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import org.asciidoctor.ast.Document;
+import org.asciidoctor.extension.IncludeProcessor;
+import org.asciidoctor.extension.PreprocessorReader;
+import org.json.JSONObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
- * AsciidoctorJ IncludeProcessor that resolves {@code jsonpath$} and {@code jsonpathcount$}
- * include directives used in Apache Camel's Antora-based documentation.
+ * AsciidoctorJ IncludeProcessor that resolves {@code jsonpath$} and {@code jsonpathcount$} include directives used in
+ * Apache Camel's Antora-based documentation.
  *
- * <p>These custom includes load a JSON file from the Antora examples directory,
- * evaluate JSONPath-like expressions against it, and set AsciiDoc document attributes
- * with the results. They produce no inline content — their purpose is purely to
- * populate attributes used later in the document.
+ * <p>
+ * These custom includes load a JSON file from the Antora examples directory, evaluate JSONPath-like expressions against
+ * it, and set AsciiDoc document attributes with the results. They produce no inline content — their purpose is purely
+ * to populate attributes used later in the document.
  *
  * <h3>Pattern 1: {@code jsonpath$}</h3>
+ *
  * <pre>
  * include::jsonpath$example$json/kafka.json[query='$.component',formats='name,scheme,syntax']
  * </pre>
- * Evaluates the {@code query} JSONPath, then for each field listed in {@code formats},
- * sets a document attribute with that field's value from the query result.
+ *
+ * Evaluates the {@code query} JSONPath, then for each field listed in {@code formats}, sets a document attribute with
+ * that field's value from the query result.
  *
  * <h3>Pattern 2: {@code jsonpathcount$}</h3>
+ *
  * <pre>
  * include::jsonpathcount$example$json/kafka.json[queries='propertycount=nodes$.componentProperties.*']
  * </pre>
- * For each {@code attrName=nodes$jsonpath} pair in {@code queries}, counts the
- * matching nodes and sets the attribute to the count.
+ *
+ * For each {@code attrName=nodes$jsonpath} pair in {@code queries}, counts the matching nodes and sets the attribute to
+ * the count.
  */
 public class JsonPathIncludeProcessor extends IncludeProcessor {
+
+    private static final Logger LOG = LoggerFactory.getLogger(JsonPathIncludeProcessor.class);
 
     private final Path examplesDir;
 
@@ -86,7 +94,7 @@ public class JsonPathIncludeProcessor extends IncludeProcessor {
             }
 
         } catch (Exception e) {
-            System.err.printf("  WARN: JsonPath include failed for %s: %s%n", target, e.getMessage());
+            LOG.warn("  JsonPath include failed for {}: {}", target, e.getMessage());
         }
 
         reader.pushInclude(attrDefs.toString(), target, target, 1, attributes);
@@ -95,16 +103,19 @@ public class JsonPathIncludeProcessor extends IncludeProcessor {
     private void collectQueryAttrs(JSONObject root, Map<String, Object> attributes, Map<String, String> out) {
         String query = (String) attributes.get("query");
         String formats = (String) attributes.get("formats");
-        if (query == null || formats == null) return;
+        if (query == null || formats == null)
+            return;
 
         query = stripQuotes(query);
 
         Object result = JsonPathUtil.query(root, query);
-        if (!(result instanceof JSONObject jsonResult)) return;
+        if (!(result instanceof JSONObject jsonResult))
+            return;
 
         for (String format : formats.split(",")) {
             format = format.trim();
-            if (format.isEmpty()) continue;
+            if (format.isEmpty())
+                continue;
 
             String attrName;
             String fieldName;
@@ -114,7 +125,8 @@ public class JsonPathIncludeProcessor extends IncludeProcessor {
                 attrName = parts[0].trim();
                 String expr = parts[1].trim();
                 fieldName = extractFieldFromExpression(expr);
-                if (fieldName == null) fieldName = attrName;
+                if (fieldName == null)
+                    fieldName = attrName;
             } else {
                 attrName = format;
                 fieldName = format;
@@ -126,14 +138,17 @@ public class JsonPathIncludeProcessor extends IncludeProcessor {
 
     private void collectCountAttrs(JSONObject root, Map<String, Object> attributes, Map<String, String> out) {
         String queries = (String) attributes.get("queries");
-        if (queries == null) return;
+        if (queries == null)
+            return;
 
         for (String entry : splitQueries(queries)) {
             entry = entry.trim();
-            if (entry.isEmpty()) continue;
+            if (entry.isEmpty())
+                continue;
 
             int eq = entry.indexOf('=');
-            if (eq < 0) continue;
+            if (eq < 0)
+                continue;
 
             String attrName = entry.substring(0, eq).trim();
             String path = entry.substring(eq + 1).trim();
@@ -148,14 +163,15 @@ public class JsonPathIncludeProcessor extends IncludeProcessor {
     }
 
     /**
-     * Split the queries string on commas, but respect bracket depth so that
-     * filter expressions like {@code [?(@.kind=="path")]} are not split.
+     * Split the queries string on commas, but respect bracket depth so that filter expressions like
+     * {@code [?(@.kind=="path")]} are not split.
      *
-     * <p>Example input:
+     * <p>
+     * Example input:
      * {@code propertycount=nodes$.componentProperties.*,pathparametercount=nodes$.properties[?(@.kind=="path")]}
      *
-     * @param queries the raw queries attribute value
-     * @return list of individual query entries
+     * @param  queries the raw queries attribute value
+     * @return         list of individual query entries
      */
     public static List<String> splitQueries(String queries) {
         List<String> result = new ArrayList<>();
@@ -183,9 +199,8 @@ public class JsonPathIncludeProcessor extends IncludeProcessor {
     }
 
     /**
-     * Extract the field name from a format expression.
-     * For example, {@code util.pascalCase(scheme)} yields {@code scheme}.
-     * A plain field name like {@code scheme} is returned as-is.
+     * Extract the field name from a format expression. For example, {@code util.pascalCase(scheme)} yields
+     * {@code scheme}. A plain field name like {@code scheme} is returned as-is.
      */
     static String extractFieldFromExpression(String expr) {
         int paren = expr.indexOf('(');

@@ -1,11 +1,12 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer.asciidoc;
 
-import io.github.luigidemasi.camelkit.knowledge.indexer.parser.AsciidocConverter;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIf;
-
 import java.nio.file.Files;
 import java.nio.file.Path;
+
+import io.github.luigidemasi.camelkit.knowledge.indexer.parser.AsciidocConverter;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIf;
 
 import static org.junit.jupiter.api.Assertions.*;
 

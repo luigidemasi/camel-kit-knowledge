@@ -6,12 +6,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Specialized chunker for release notes documents.
- * Splits JIRA issue rows from markdown tables into individual chunks,
+ * Specialized chunker for release notes documents. Splits JIRA issue rows from markdown tables into individual chunks,
  * while falling back to SectionChunker for non-table sections.
  *
- * Recognizes JIRA issue patterns (e.g. CAMEL-*)
- * in markdown table rows like:
+ * Recognizes JIRA issue patterns (e.g. CAMEL-*) in markdown table rows like:
+ *
  * <pre>
  * | [CAMEL-22784](https://issues.apache.org/jira/browse/CAMEL-22784) | description |
  * </pre>
@@ -23,8 +22,8 @@ public class ReleaseNotesChunker {
 
     private static final Pattern JIRA_ROW_PATTERN = Pattern.compile(
             "^\\|\\s*(?:\\d+\\s*\\|)?\\s*\\[(" +
-                    "(?:CAMEL)-\\d+" +
-                    ")\\]\\(([^)]+)\\)\\s*\\|\\s*(.+?)\\s*\\|\\s*$",
+                                                                    "(?:CAMEL)-\\d+" +
+                                                                    ")\\]\\(([^)]+)\\)\\s*\\|\\s*(.+?)\\s*\\|\\s*$",
             Pattern.MULTILINE);
 
     private static final Pattern UPSTREAM_REF_PATTERN = Pattern.compile(
@@ -35,30 +34,29 @@ public class ReleaseNotesChunker {
     /**
      * A resolved JIRA issue from a release notes table.
      *
-     * @param jiraIds     all JIRA IDs (primary + upstream references)
-     * @param description issue description from the table
-     * @param url         JIRA URL
+     * @param jiraIds      all JIRA IDs (primary + upstream references)
+     * @param description  issue description from the table
+     * @param url          JIRA URL
      * @param sectionTitle heading context (e.g., "4.14.4 fixed issues")
      */
     public record ResolvedIssue(
             List<String> jiraIds,
             String description,
             String url,
-            String sectionTitle
-    ) {}
+            String sectionTitle) {
+    }
 
     /**
      * Result of chunking release notes: individual JIRA issues + remaining sections.
      */
     public record ChunkResult(
             List<ResolvedIssue> issues,
-            List<SectionChunker.Section> otherSections
-    ) {}
+            List<SectionChunker.Section> otherSections) {
+    }
 
     /**
-     * Chunk release notes markdown into individual JIRA issues and other sections.
-     * Table rows with JIRA IDs become ResolvedIssue objects.
-     * Everything else (prose, known issues, features) is chunked by SectionChunker.
+     * Chunk release notes markdown into individual JIRA issues and other sections. Table rows with JIRA IDs become
+     * ResolvedIssue objects. Everything else (prose, known issues, features) is chunked by SectionChunker.
      */
     public ChunkResult chunk(String markdown) {
         List<ResolvedIssue> issues = new ArrayList<>();
@@ -108,8 +106,7 @@ public class ReleaseNotesChunker {
             nonTableContent.append(line).append("\n");
         }
 
-        List<SectionChunker.Section> otherSections =
-                sectionChunker.chunk(nonTableContent.toString());
+        List<SectionChunker.Section> otherSections = sectionChunker.chunk(nonTableContent.toString());
 
         return new ChunkResult(issues, otherSections);
     }

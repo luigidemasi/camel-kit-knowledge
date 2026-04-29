@@ -1,17 +1,18 @@
 package io.github.luigidemasi.camelkit.knowledge.mcp;
 
-import io.quarkus.test.junit.QuarkusTest;
-import jakarta.inject.Inject;
-import org.junit.jupiter.api.Test;
-
 import java.util.List;
 import java.util.Set;
+
+import jakarta.inject.Inject;
+
+import io.quarkus.test.junit.QuarkusTest;
+import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Integration test that boots the full Quarkus app, loads the real Lucene index
- * from classpath resources, and exercises the MCP tools end-to-end.
+ * Integration test that boots the full Quarkus app, loads the real Lucene index from classpath resources, and exercises
+ * the MCP tools end-to-end.
  */
 @QuarkusTest
 class KnowledgeMcpServerTest {
@@ -34,8 +35,7 @@ class KnowledgeMcpServerTest {
 
     @Test
     void camelDocsSearch_findsDocumentation() throws Exception {
-        List<LuceneSearchService.SearchResult> results =
-                searchService.search("apache_camel", "quarkus", null, null, 5);
+        List<LuceneSearchService.SearchResult> results = searchService.search("apache_camel", "quarkus", null, null, 5);
 
         assertFalse(results.isEmpty(), "Expected results for query 'quarkus'");
         assertTrue(results.stream().allMatch(r -> "apache-camel".equals(r.source())),
@@ -44,8 +44,8 @@ class KnowledgeMcpServerTest {
 
     @Test
     void camelDocsSearch_withVersionFilter() throws Exception {
-        List<LuceneSearchService.SearchResult> results =
-                searchService.search("apache_camel", "getting started", "4.14", null, 5);
+        List<LuceneSearchService.SearchResult> results
+                = searchService.search("apache_camel", "getting started", "4.14", null, 5);
 
         assertFalse(results.isEmpty(), "Expected results for 'getting started' with version 4.14");
     }
@@ -79,8 +79,8 @@ class KnowledgeMcpServerTest {
 
     @Test
     void lookupNonExistentComponent_returnsEmpty() throws Exception {
-        List<LuceneSearchService.SearchResult> results =
-                searchService.lookupComponent("apache_camel", "zzz-no-such-component-999", null, null);
+        List<LuceneSearchService.SearchResult> results
+                = searchService.lookupComponent("apache_camel", "zzz-no-such-component-999", null, null);
 
         assertTrue(results.isEmpty(), "Should return empty for nonexistent component");
     }

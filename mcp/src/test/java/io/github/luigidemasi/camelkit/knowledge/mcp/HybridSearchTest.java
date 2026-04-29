@@ -1,7 +1,10 @@
 package io.github.luigidemasi.camelkit.knowledge.mcp;
 
+import java.util.List;
+
 import io.github.luigidemasi.camelkit.knowledge.embedding.OnnxEmbeddingProvider;
 import io.github.luigidemasi.camelkit.knowledge.schema.KnowledgeDocument;
+
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
@@ -13,13 +16,10 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 
-import java.util.List;
-
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Tests hybrid BM25 + vector search.
- * Requires model.onnx on classpath — skipped if not available.
+ * Tests hybrid BM25 + vector search. Requires model.onnx on classpath — skipped if not available.
  */
 @EnabledIf("modelExists")
 class HybridSearchTest {
@@ -29,7 +29,8 @@ class HybridSearchTest {
 
     static boolean modelExists() {
         return HybridSearchTest.class.getClassLoader()
-                .getResource("models/model_quantized.onnx") != null;
+                .getResource("models/model_quantized.onnx")
+               != null;
     }
 
     @BeforeAll
@@ -51,8 +52,10 @@ class HybridSearchTest {
         searcher = new IndexSearcher(DirectoryReader.open(dir));
     }
 
-    private static void addDoc(IndexWriter writer, String id, String domain,
-                               String title, String content) throws Exception {
+    private static void addDoc(
+            IndexWriter writer, String id, String domain,
+            String title, String content)
+            throws Exception {
         float[] embedding = embeddingProvider.embed(title + " " + content);
         KnowledgeDocument doc = new KnowledgeDocument(id, domain)
                 .source("test")
@@ -65,18 +68,16 @@ class HybridSearchTest {
 
     @Test
     void keywordSearchFindsExactMatch() throws Exception {
-        List<LuceneSearchService.SearchResult> results =
-                LuceneSearchService.hybridSearch(searcher, embeddingProvider,
-                        "apache_camel", "http4 renamed", null, null, 10, 0.6f, 0.4f);
+        List<LuceneSearchService.SearchResult> results = LuceneSearchService.hybridSearch(searcher, embeddingProvider,
+                "apache_camel", "http4 renamed", null, null, 10, 0.6f, 0.4f);
         assertFalse(results.isEmpty());
         assertEquals("doc1", results.get(0).id());
     }
 
     @Test
     void semanticSearchFindsByMeaning() throws Exception {
-        List<LuceneSearchService.SearchResult> results =
-                LuceneSearchService.hybridSearch(searcher, embeddingProvider,
-                        "apache_camel", "change HTTP library", null, null, 10, 0.6f, 0.4f);
+        List<LuceneSearchService.SearchResult> results = LuceneSearchService.hybridSearch(searcher, embeddingProvider,
+                "apache_camel", "change HTTP library", null, null, 10, 0.6f, 0.4f);
         assertFalse(results.isEmpty(), "Semantic search should find results for paraphrased query");
         boolean foundHttp = results.stream().anyMatch(r -> r.id().equals("doc1"));
         assertTrue(foundHttp, "Should find http4 doc via semantic similarity");
@@ -84,9 +85,8 @@ class HybridSearchTest {
 
     @Test
     void semanticSearchFindsMessageQueueByParaphrase() throws Exception {
-        List<LuceneSearchService.SearchResult> results =
-                LuceneSearchService.hybridSearch(searcher, embeddingProvider,
-                        "apache_camel", "messaging system setup", null, null, 10, 0.6f, 0.4f);
+        List<LuceneSearchService.SearchResult> results = LuceneSearchService.hybridSearch(searcher, embeddingProvider,
+                "apache_camel", "messaging system setup", null, null, 10, 0.6f, 0.4f);
         assertFalse(results.isEmpty());
         boolean foundJms = results.stream().anyMatch(r -> r.id().equals("doc3"));
         assertTrue(foundJms, "Should find JMS doc via semantic similarity to messaging");

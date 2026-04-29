@@ -1,11 +1,11 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-
-import java.nio.file.Files;
-import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -20,7 +20,8 @@ class DocumentFetcherTest {
         DocumentFetcher fetcher = new DocumentFetcher(tempDir);
 
         // Fetch a known small file from GitHub
-        String url = "https://raw.githubusercontent.com/apache/camel/main/docs/user-manual/modules/ROOT/pages/camel-4-migration-guide.adoc";
+        String url
+                = "https://raw.githubusercontent.com/apache/camel/main/docs/user-manual/modules/ROOT/pages/camel-4-migration-guide.adoc";
         String content = fetcher.fetchText(url);
 
         assertNotNull(content);
@@ -32,7 +33,8 @@ class DocumentFetcherTest {
     void fetchToFile() throws Exception {
         DocumentFetcher fetcher = new DocumentFetcher(tempDir);
 
-        String url = "https://raw.githubusercontent.com/apache/camel/main/docs/user-manual/modules/ROOT/pages/camel-4-migration-guide.adoc";
+        String url
+                = "https://raw.githubusercontent.com/apache/camel/main/docs/user-manual/modules/ROOT/pages/camel-4-migration-guide.adoc";
         Path file = fetcher.fetch(url, "camel-4-migration.adoc");
 
         assertTrue(Files.exists(file));

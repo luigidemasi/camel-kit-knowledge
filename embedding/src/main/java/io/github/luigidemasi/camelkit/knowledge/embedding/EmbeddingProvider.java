@@ -8,8 +8,8 @@ public interface EmbeddingProvider {
     /**
      * Embed a text string into a dense vector.
      *
-     * @param text the text to embed
-     * @return float array of embedding dimensions
+     * @param  text the text to embed
+     * @return      float array of embedding dimensions
      */
     float[] embed(String text);
 

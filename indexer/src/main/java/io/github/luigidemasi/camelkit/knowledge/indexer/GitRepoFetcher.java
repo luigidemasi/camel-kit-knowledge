@@ -1,11 +1,5 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer;
 
-import org.eclipse.jgit.api.CloneCommand;
-import org.eclipse.jgit.api.Git;
-import org.eclipse.jgit.api.errors.GitAPIException;
-import org.eclipse.jgit.lib.ProgressMonitor;
-import org.eclipse.jgit.lib.Ref;
-
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -15,14 +9,23 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 
+import org.eclipse.jgit.api.CloneCommand;
+import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.lib.ProgressMonitor;
+import org.eclipse.jgit.lib.Ref;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
- * Clones Git repositories for document indexing using JGit.
- * Shallow clones (depth=1) to minimize download size.
+ * Clones Git repositories for document indexing using JGit. Shallow clones (depth=1) to minimize download size.
  *
- * Cached repos are reused across runs — delete the repos directory to force refresh.
- * No git-pull on shallow clones (JGit handles that poorly).
+ * Cached repos are reused across runs — delete the repos directory to force refresh. No git-pull on shallow clones
+ * (JGit handles that poorly).
  */
 public class GitRepoFetcher {
+
+    private static final Logger LOG = LoggerFactory.getLogger(GitRepoFetcher.class);
 
     private final Path baseDir;
 
@@ -34,9 +37,9 @@ public class GitRepoFetcher {
      * Clone a repo at a specific branch/tag, or update if already cloned.
      *
      * <ul>
-     *   <li>If repo exists with .git → fetch + hard reset to latest (fast, only downloads delta)</li>
-     *   <li>If repo exists without .git (corrupted) → delete and re-clone</li>
-     *   <li>If repo doesn't exist → fresh shallow clone</li>
+     * <li>If repo exists with .git → fetch + hard reset to latest (fast, only downloads delta)</li>
+     * <li>If repo exists without .git (corrupted) → delete and re-clone</li>
+     * <li>If repo doesn't exist → fresh shallow clone</li>
      * </ul>
      */
     public Path fetchRepo(String repoUrl, String refName, String localName) throws IOException {
@@ -56,10 +59,9 @@ public class GitRepoFetcher {
     }
 
     /**
-     * Tag-aware fetchRepo overload.
-     * For tags (immutable), uses a {@code .fetched-tag} marker file to detect cache hits.
-     * If the marker doesn't match, deletes and re-clones.
-     * For branches, delegates to the existing {@link #fetchRepo(String, String, String)}.
+     * Tag-aware fetchRepo overload. For tags (immutable), uses a {@code .fetched-tag} marker file to detect cache hits.
+     * If the marker doesn't match, deletes and re-clones. For branches, delegates to the existing
+     * {@link #fetchRepo(String, String, String)}.
      */
     public Path fetchRepo(String repoUrl, String refName, String localName, boolean isTag) throws IOException {
         if (!isTag) {
@@ -72,8 +74,7 @@ public class GitRepoFetcher {
         if (Files.isDirectory(repoDir.resolve(".git")) && Files.exists(tagMarker)) {
             String cachedTag = Files.readString(tagMarker).trim();
             if (cachedTag.equals(refName)) {
-                System.out.printf("  Reusing %s (tag: %s)%n", localName, refName);
-                System.out.flush();
+                LOG.info("  Reusing {} (tag: {})", localName, refName);
                 return repoDir;
             }
         }
@@ -88,11 +89,10 @@ public class GitRepoFetcher {
     }
 
     /**
-     * Lists all tags from a remote Git repository without cloning it.
-     * Uses JGit's {@code ls-remote --tags} equivalent.
+     * Lists all tags from a remote Git repository without cloning it. Uses JGit's {@code ls-remote --tags} equivalent.
      *
-     * @param repoUrl the remote repository URL
-     * @return tag names without {@code refs/tags/} prefix, excluding dereferenced {@code ^{}} entries
+     * @param  repoUrl the remote repository URL
+     * @return         tag names without {@code refs/tags/} prefix, excluding dereferenced {@code ^{}} entries
      */
     public static List<String> listRemoteTags(String repoUrl) throws IOException {
         try {
@@ -111,12 +111,11 @@ public class GitRepoFetcher {
     }
 
     /**
-     * Update an existing repo by fetching latest changes and resetting the working tree.
-     * Much faster than a full clone — only downloads the delta.
+     * Update an existing repo by fetching latest changes and resetting the working tree. Much faster than a full clone
+     * — only downloads the delta.
      */
     private Path updateRepo(Path repoDir, String refName, String localName) throws IOException {
-        System.out.printf("  Updating %s (%s) ...%n", localName, refName);
-        System.out.flush();
+        LOG.info("  Updating {} ({}) ...", localName, refName);
 
         long start = System.currentTimeMillis();
 
@@ -134,13 +133,11 @@ public class GitRepoFetcher {
                     .call();
 
             long elapsed = (System.currentTimeMillis() - start) / 1000;
-            System.out.printf("  Updated: %s (%ds)%n", localName, elapsed);
-            System.out.flush();
+            LOG.info("  Updated: {} ({}s)", localName, elapsed);
 
         } catch (GitAPIException e) {
             // Update failed — fall back to fresh clone
-            System.out.printf("  WARN: Update failed for %s: %s — re-cloning%n",
-                    localName, e.getMessage());
+            LOG.warn("  Update failed for {}: {} — re-cloning", localName, e.getMessage());
             deleteDirectory(repoDir);
             return cloneRepo(null, refName, localName, repoDir);
         }
@@ -157,8 +154,7 @@ public class GitRepoFetcher {
             throw new IOException("Cannot re-clone " + localName + " — original URL unknown");
         }
 
-        System.out.printf("  Cloning %s (%s) ...%n", repoUrl, refName);
-        System.out.flush();
+        LOG.info("  Cloning {} ({}) ...", repoUrl, refName);
 
         long start = System.currentTimeMillis();
         Files.createDirectories(repoDir.getParent());
@@ -178,11 +174,11 @@ public class GitRepoFetcher {
 
             long elapsed = (System.currentTimeMillis() - start) / 1000;
             long fileCount = countFiles(repoDir);
-            System.out.printf("  Done: %s — %d files (%ds)%n", localName, fileCount, elapsed);
-            System.out.flush();
+            LOG.info("  Done: {} — {} files ({}s)", localName, fileCount, elapsed);
 
         } catch (GitAPIException e) {
-            if (Files.exists(repoDir)) deleteDirectory(repoDir);
+            if (Files.exists(repoDir))
+                deleteDirectory(repoDir);
             throw new IOException("Failed to clone " + repoUrl + " at " + refName + ": " + e.getMessage(), e);
         }
 
@@ -203,7 +199,8 @@ public class GitRepoFetcher {
         }
 
         @Override
-        public void start(int totalTasks) {}
+        public void start(int totalTasks) {
+        }
 
         @Override
         public void beginTask(String title, int total) {
@@ -211,11 +208,10 @@ public class GitRepoFetcher {
             this.totalWork = total;
             this.completed = 0;
             if (total > 0) {
-                System.out.printf("    %s: %s (0/%d)%n", label, title, total);
+                LOG.info("    {}: {} (0/{})", label, title, total);
             } else {
-                System.out.printf("    %s: %s%n", label, title);
+                LOG.info("    {}: {}", label, title);
             }
-            System.out.flush();
         }
 
         @Override
@@ -223,25 +219,28 @@ public class GitRepoFetcher {
             completed += work;
             if (totalWork > 0 && completed % Math.max(totalWork / 10, 1) == 0) {
                 int pct = (int) ((100.0 * completed) / totalWork);
-                System.out.printf("    %s: %s (%d/%d) %d%%%n",
-                        label, currentTask, completed, totalWork, pct);
-                System.out.flush();
+                LOG.info("    {}: {} ({}/{}) {}%", label, currentTask, completed, totalWork, pct);
             }
         }
 
         @Override
-        public void endTask() {}
+        public void endTask() {
+        }
 
         @Override
-        public boolean isCancelled() { return false; }
+        public boolean isCancelled() {
+            return false;
+        }
 
         @Override
-        public void showDuration(boolean enabled) {}
+        public void showDuration(boolean enabled) {
+        }
     }
 
     public Path refreshRepo(String repoUrl, String refName, String localName) throws IOException {
         Path repoDir = baseDir.resolve(localName);
-        if (Files.isDirectory(repoDir)) deleteDirectory(repoDir);
+        if (Files.isDirectory(repoDir))
+            deleteDirectory(repoDir);
         return fetchRepo(repoUrl, refName, localName);
     }
 
@@ -260,16 +259,23 @@ public class GitRepoFetcher {
     private void deleteDirectory(Path dir) throws IOException {
         try (var stream = Files.walk(dir)) {
             stream.sorted(Comparator.reverseOrder())
-                    .forEach(p -> { try { Files.delete(p); } catch (IOException ignored) {} });
+                    .forEach(p -> {
+                        try {
+                            Files.delete(p);
+                        } catch (IOException ignored) {
+                        }
+                    });
         }
     }
 
     public List<Path> listFiles(Path dir, String glob) throws IOException {
         List<Path> result = new ArrayList<>();
-        if (!Files.isDirectory(dir)) return result;
+        if (!Files.isDirectory(dir))
+            return result;
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir, glob)) {
             for (Path path : stream) {
-                if (Files.isRegularFile(path)) result.add(path);
+                if (Files.isRegularFile(path))
+                    result.add(path);
             }
         }
         return result;
@@ -277,7 +283,8 @@ public class GitRepoFetcher {
 
     public List<Path> listFilesRecursive(Path dir, String glob) throws IOException {
         List<Path> result = new ArrayList<>();
-        if (!Files.isDirectory(dir)) return result;
+        if (!Files.isDirectory(dir))
+            return result;
         try (var stream = Files.walk(dir)) {
             stream.filter(Files::isRegularFile)
                     .filter(p -> matchesGlob(p.getFileName().toString(), glob))

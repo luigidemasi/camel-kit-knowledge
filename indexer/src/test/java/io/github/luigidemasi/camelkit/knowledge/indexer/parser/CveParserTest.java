@@ -1,8 +1,8 @@
 package io.github.luigidemasi.camelkit.knowledge.indexer.parser;
 
-import org.junit.jupiter.api.Test;
-
 import java.nio.charset.StandardCharsets;
+
+import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -12,8 +12,7 @@ class CveParserTest {
     void parsesFrontmatter() throws Exception {
         String content = new String(
                 getClass().getClassLoader().getResourceAsStream("test-cve.md").readAllBytes(),
-                StandardCharsets.UTF_8
-        );
+                StandardCharsets.UTF_8);
 
         CveParser.CveAdvisory cve = CveParser.parse(content);
 
