@@ -44,6 +44,12 @@
             <artifactId>quarkus-mcp-server-sse</artifactId>
         </dependency>
 
+        <!-- OpenTelemetry — disabled by default, activated via env vars for perf testing -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-opentelemetry</artifactId>
+        </dependency>
+
         <!-- Knowledge schema (shared types) -->
         <dependency>
             <groupId>io.github.luigidemasi</groupId>

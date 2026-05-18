@@ -16,6 +16,7 @@ import io.github.luigidemasi.camelkit.knowledge.embedding.EmbeddingProvider;
 import io.github.luigidemasi.camelkit.knowledge.embedding.OnnxEmbeddingProvider;
 import io.github.luigidemasi.camelkit.knowledge.schema.KnowledgeFields;
 
+import io.opentelemetry.instrumentation.annotations.WithSpan;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.index.DirectoryReader;
@@ -164,6 +165,7 @@ public class LuceneSearchService {
     /**
      * Full-text search within a domain, using hybrid BM25 + vector scoring when available.
      */
+    @WithSpan("knowledge.search.hybrid")
     public List<SearchResult> search(
             String domain, String query, String sourceVersion, String targetVersion, int maxResults)
             throws IOException, ParseException {
