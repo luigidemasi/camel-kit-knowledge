@@ -13,6 +13,7 @@ import jakarta.inject.Inject;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 
+import io.opentelemetry.instrumentation.annotations.WithSpan;
 import org.apache.maven.repository.internal.MavenRepositorySystemUtils;
 import org.eclipse.aether.DefaultRepositorySystemSession;
 import org.eclipse.aether.RepositorySystem;
@@ -63,6 +64,7 @@ public class IndexResolver {
      * @return                        path to directory containing extracted Lucene index files
      * @throws IndexResolverException if resolution fails and no cached version is available
      */
+    @WithSpan("knowledge.index.resolve")
     public Path resolve() throws IndexResolverException {
         RepositorySystem repoSystem = newRepositorySystem();
         Path localRepoPath = resolveLocalRepoPath();
