@@ -139,8 +139,15 @@ public class LuceneSearchService {
                     String title = doc.get(KnowledgeFields.SECTION_TITLE);
                     float[] fresh = embeddingProvider.embed((title != null ? title : "") + " " + content);
                     float[] stored = values.vectorValue();
+                    if (stored.length != fresh.length) {
+                        // A dimension mismatch is a hard index/runtime incompatibility — never
+                        // let a truncated dot product sneak past the threshold
+                        LOG.warn("Embedding self-check: stored vector dimension {} != runtime dimension {}",
+                                stored.length, fresh.length);
+                        return false;
+                    }
                     double dot = 0;
-                    for (int i = 0; i < Math.min(stored.length, fresh.length); i++) {
+                    for (int i = 0; i < stored.length; i++) {
                         dot += stored[i] * fresh[i]; // both L2-normalized
                     }
                     sum += dot;
@@ -158,8 +165,9 @@ public class LuceneSearchService {
                     String.format(java.util.Locale.ROOT, "%.4f", mean), n);
             return mean >= minMeanCosine;
         } catch (IOException e) {
-            LOG.warn("Embedding self-check failed ({}); keeping vector search enabled", e.getMessage());
-            return true;
+            // Fail closed: if we cannot verify the vectors, we must not serve them
+            LOG.warn("Embedding self-check could not run ({}); disabling vector search", e.getMessage());
+            return false;
         }
     }
 
