@@ -37,13 +37,55 @@ class SectionChunkerTest {
         assertTrue(sections.get(0).content().contains("following components"));
         assertEquals(2, sections.get(0).level());
 
-        assertEquals("camel-http4", sections.get(1).title());
+        // Subsection titles carry the parent-heading breadcrumb so they stay
+        // distinguishable for BM25 and embeddings ("Options" alone is ambiguous)
+        assertEquals("Component Changes > camel-http4", sections.get(1).title());
         assertTrue(sections.get(1).content().contains("renamed to http"));
         assertEquals(3, sections.get(1).level());
 
-        assertEquals("camel-netty4", sections.get(2).title());
+        assertEquals("Component Changes > camel-netty4", sections.get(2).title());
         assertTrue(sections.get(2).content().contains("renamed to netty"));
         assertEquals(3, sections.get(2).level());
+    }
+
+    @Test
+    void headingsInsideCodeFencesDoNotSplit() {
+        String markdown = """
+                ## Configuration
+
+                Example properties file:
+
+                ```properties
+                ## this is a comment, not a heading
+                camel.component.kafka.brokers=localhost:9092
+                ```
+
+                More text after the fence.
+                """;
+
+        List<Section> sections = chunker.chunk(markdown);
+
+        assertEquals(1, sections.size());
+        assertEquals("Configuration", sections.get(0).title());
+        assertTrue(sections.get(0).content().contains("this is a comment"));
+        assertTrue(sections.get(0).content().contains("More text after the fence"));
+    }
+
+    @Test
+    void oversizedSectionsAreSplitAtParagraphs() {
+        StringBuilder md = new StringBuilder("## Big Section\n\n");
+        for (int i = 0; i < 40; i++) {
+            md.append("Paragraph ").append(i).append(". ").append("x".repeat(400)).append("\n\n");
+        }
+
+        List<Section> sections = chunker.chunk(md.toString());
+
+        assertTrue(sections.size() > 1, "Oversized section must be split");
+        for (Section s : sections) {
+            assertTrue(s.content().length() <= SectionChunker.MAX_CHUNK_CHARS,
+                    "Every part must fit the cap, got " + s.content().length());
+            assertTrue(s.title().startsWith("Big Section (part "));
+        }
     }
 
     @Test

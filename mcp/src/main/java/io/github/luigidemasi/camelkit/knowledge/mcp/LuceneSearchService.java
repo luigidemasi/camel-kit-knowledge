@@ -14,13 +14,17 @@ import jakarta.inject.Inject;
 
 import io.github.luigidemasi.camelkit.knowledge.embedding.EmbeddingProvider;
 import io.github.luigidemasi.camelkit.knowledge.embedding.OnnxEmbeddingProvider;
+import io.github.luigidemasi.camelkit.knowledge.embedding.OnnxReranker;
 import io.github.luigidemasi.camelkit.knowledge.schema.KnowledgeFields;
 
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.MultiTerms;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.index.Terms;
+import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.queryparser.classic.ParseException;
 import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.*;
@@ -39,6 +43,14 @@ public class LuceneSearchService {
 
     private static final float BM25_WEIGHT = 0.2f;
     private static final float VECTOR_WEIGHT = 0.8f;
+    /** How many hybrid-search candidates the cross-encoder reranker scores before cutting to maxResults. */
+    private static final int RERANK_CANDIDATES = 30;
+    /**
+     * Relevance floor on the reranker's sigmoid score. Irrelevant (query, passage) pairs score near 0 on ms-marco
+     * cross-encoders; anything below this is noise and is dropped rather than returned with a confident-looking
+     * normalized score.
+     */
+    private static final float MIN_RERANK_SCORE = 0.02f;
 
     @Inject
     IndexResolver indexResolver;
@@ -46,6 +58,7 @@ public class LuceneSearchService {
     private IndexReader reader;
     private IndexSearcher searcher;
     private EmbeddingProvider embeddingProvider;
+    private OnnxReranker reranker;
     private Path indexTempDir;
     private final StandardAnalyzer analyzer = new StandardAnalyzer();
 
@@ -67,6 +80,42 @@ public class LuceneSearchService {
             LOG.warn("ONNX embedding model not available, falling back to BM25-only search");
             embeddingProvider = null;
         }
+
+        // Vectors from a different model are silently incompatible even at matching dimensions —
+        // disable the vector leg unless the index was built with the runtime model.
+        if (embeddingProvider != null) {
+            String indexModel = readIndexEmbeddingModel();
+            if (!embeddingProvider.modelId().equals(indexModel)) {
+                LOG.warn("Index embeddings were built with model '{}' but runtime model is '{}' — "
+                         + "disabling vector search (BM25 + reranker only). Rebuild and republish the index.",
+                        indexModel != null ? indexModel : "unknown (no index metadata)",
+                        embeddingProvider.modelId());
+                embeddingProvider = null;
+            }
+        }
+
+        // Initialize cross-encoder reranker (graceful degradation if model not available)
+        try {
+            reranker = new OnnxReranker();
+            reranker.score("warmup", "warmup");
+        } catch (Exception e) {
+            LOG.warn("ONNX reranker model not available, returning hybrid-search order");
+            reranker = null;
+        }
+    }
+
+    /** Reads the embedding model the index was built with, or null for legacy indexes without metadata. */
+    private String readIndexEmbeddingModel() {
+        try {
+            TopDocs td = searcher.search(
+                    new TermQuery(new Term(KnowledgeFields.ID, KnowledgeFields.INDEX_META_ID)), 1);
+            if (td.scoreDocs.length > 0) {
+                return searcher.doc(td.scoreDocs[0].doc).get(KnowledgeFields.EMBEDDING_MODEL);
+            }
+        } catch (IOException e) {
+            LOG.warn("Failed to read index embedding-model metadata: {}", e.getMessage());
+        }
+        return null;
     }
 
     /** Package-private — used by evaluation tests to access the real index. */
@@ -162,13 +211,82 @@ public class LuceneSearchService {
     }
 
     /**
-     * Full-text search within a domain, using hybrid BM25 + vector scoring when available.
+     * Full-text search within a domain, using hybrid BM25 + vector scoring when available, followed by cross-encoder
+     * reranking of the top candidates when the reranker model is available.
      */
     public List<SearchResult> search(
             String domain, String query, String sourceVersion, String targetVersion, int maxResults)
             throws IOException, ParseException {
-        return hybridSearch(searcher, embeddingProvider, domain, query, sourceVersion, targetVersion, maxResults,
-                BM25_WEIGHT, VECTOR_WEIGHT);
+        return search(domain, query, sourceVersion, targetVersion, null, maxResults);
+    }
+
+    /**
+     * Full-text search with an optional hard doc_type filter (e.g. "release-notes").
+     */
+    public List<SearchResult> search(
+            String domain, String query, String sourceVersion, String targetVersion, String docType, int maxResults)
+            throws IOException, ParseException {
+        int candidates = reranker != null ? Math.max(maxResults, RERANK_CANDIDATES) : maxResults;
+        List<SearchResult> results = hybridSearch(searcher, embeddingProvider, domain, query, sourceVersion,
+                targetVersion, docType, candidates, BM25_WEIGHT, VECTOR_WEIGHT);
+        return rerank(query, results, maxResults);
+    }
+
+    /** Human-readable description of the active retrieval pipeline — surfaced to MCP clients. */
+    String searchMode() {
+        return (embeddingProvider != null ? "hybrid" : "bm25-only")
+               + (reranker != null ? "+rerank" : "");
+    }
+
+    /** Index-level statistics — lets clients detect stale coverage instead of trusting silently degraded answers. */
+    public record IndexInfo(int totalDocs, String embeddingModel, String searchMode,
+            Map<String, Integer> docTypeCounts, List<String> versions) {
+    }
+
+    public IndexInfo indexInfo() throws IOException {
+        Map<String, Integer> docTypes = new TreeMap<>();
+        Terms docTypeTerms = MultiTerms.getTerms(reader, KnowledgeFields.DOC_TYPE);
+        if (docTypeTerms != null) {
+            TermsEnum te = docTypeTerms.iterator();
+            while (te.next() != null) {
+                docTypes.put(te.term().utf8ToString(), te.docFreq());
+            }
+        }
+        List<String> versions = new ArrayList<>();
+        Terms versionTerms = MultiTerms.getTerms(reader, KnowledgeFields.SOURCE_VERSION);
+        if (versionTerms != null) {
+            TermsEnum te = versionTerms.iterator();
+            while (te.next() != null) {
+                versions.add(te.term().utf8ToString());
+            }
+        }
+        return new IndexInfo(reader.numDocs(), readIndexEmbeddingModel(), searchMode(), docTypes, versions);
+    }
+
+    /**
+     * Rerank hybrid-search candidates with the cross-encoder and cut to maxResults. Falls back to the input order
+     * (truncated) when the reranker is unavailable. Results scoring below {@link #MIN_RERANK_SCORE} are dropped — the
+     * cross-encoder sigmoid is an absolute relevance signal, so a query about content absent from the corpus returns an
+     * empty list instead of confidently-scored noise.
+     */
+    private List<SearchResult> rerank(String query, List<SearchResult> candidates, int maxResults) {
+        if (reranker == null || candidates.size() <= 1) {
+            return candidates.size() > maxResults ? candidates.subList(0, maxResults) : candidates;
+        }
+
+        List<SearchResult> scored = new ArrayList<>(candidates.size());
+        for (SearchResult r : candidates) {
+            String passage = (r.sectionTitle() != null ? r.sectionTitle() + " " : "") + r.content();
+            float score = reranker.score(query, passage);
+            if (score < MIN_RERANK_SCORE) {
+                continue;
+            }
+            scored.add(new SearchResult(
+                    r.id(), r.source(), r.docType(), r.sourceVersion(), r.targetVersion(),
+                    r.runtimes(), r.sectionTitle(), r.content(), score));
+        }
+        scored.sort((a, b) -> Float.compare(b.score(), a.score()));
+        return scored.size() > maxResults ? scored.subList(0, maxResults) : scored;
     }
 
     /**
@@ -181,33 +299,58 @@ public class LuceneSearchService {
             String targetVersion, int maxResults,
             float bm25Weight, float vectorWeight)
             throws IOException, ParseException {
+        return hybridSearch(searcher, embeddingProvider, domain, query, sourceVersion, targetVersion, null,
+                maxResults, bm25Weight, vectorWeight);
+    }
+
+    /**
+     * Hybrid BM25 + vector search with an optional hard doc_type filter. sourceVersion/targetVersion/docType are hard
+     * (MUST) filters applied to both the BM25 leg and the KNN pre-filter — a soft version boost that mostly works is
+     * worse than a hard filter, because it fails rarely and invisibly.
+     */
+    static List<SearchResult> hybridSearch(
+            IndexSearcher searcher, EmbeddingProvider embeddingProvider,
+            String domain, String query, String sourceVersion,
+            String targetVersion, String docType, int maxResults,
+            float bm25Weight, float vectorWeight)
+            throws IOException, ParseException {
 
         StandardAnalyzer analyzer = new StandardAnalyzer();
 
-        // --- BM25 text search ---
-        BooleanQuery.Builder bm25Builder = new BooleanQuery.Builder()
+        // Hard filters shared by the BM25 leg and the KNN pre-filter
+        BooleanQuery.Builder filterBuilder = new BooleanQuery.Builder()
                 .add(new TermQuery(new Term(KnowledgeFields.DOMAIN, domain)), BooleanClause.Occur.MUST);
-        QueryParser parser = new QueryParser(KnowledgeFields.CONTENT, analyzer);
-        bm25Builder.add(parser.parse(query), BooleanClause.Occur.MUST);
         if (sourceVersion != null) {
-            bm25Builder.add(new TermQuery(new Term(KnowledgeFields.SOURCE_VERSION, sourceVersion)),
-                    BooleanClause.Occur.SHOULD);
+            filterBuilder.add(new TermQuery(new Term(KnowledgeFields.SOURCE_VERSION, sourceVersion)),
+                    BooleanClause.Occur.MUST);
         }
         if (targetVersion != null) {
-            bm25Builder.add(new TermQuery(new Term(KnowledgeFields.TARGET_VERSION, targetVersion)),
-                    BooleanClause.Occur.SHOULD);
+            filterBuilder.add(new TermQuery(new Term(KnowledgeFields.TARGET_VERSION, targetVersion)),
+                    BooleanClause.Occur.MUST);
         }
+        if (docType != null) {
+            filterBuilder.add(new TermQuery(new Term(KnowledgeFields.DOC_TYPE, docType)),
+                    BooleanClause.Occur.MUST);
+        }
+        BooleanQuery filter = filterBuilder.build();
 
-        int fetchSize = maxResults * 3;
-        TopDocs bm25Docs = searcher.search(bm25Builder.build(), fetchSize);
+        // --- BM25 text search --- (query text is escaped: natural-language questions routinely contain
+        // Lucene syntax chars like ':', '?', '(' that would throw ParseException or query phantom fields)
+        QueryParser parser = new QueryParser(KnowledgeFields.CONTENT, analyzer);
+        BooleanQuery bm25Query = new BooleanQuery.Builder()
+                .add(filter, BooleanClause.Occur.MUST)
+                .add(parser.parse(QueryParser.escape(query)), BooleanClause.Occur.MUST)
+                .build();
+
+        int fetchSize = Math.max(1, maxResults) * 3;
+        TopDocs bm25Docs = searcher.search(bm25Query, fetchSize);
 
         // --- Vector search (if embedding provider available) ---
         TopDocs vectorDocs = null;
         if (embeddingProvider != null) {
             float[] queryVector = embeddingProvider.embed(query);
-            Query domainFilter = new TermQuery(new Term(KnowledgeFields.DOMAIN, domain));
             KnnFloatVectorQuery vectorQuery = new KnnFloatVectorQuery(
-                    KnowledgeFields.EMBEDDING, queryVector, fetchSize, domainFilter);
+                    KnowledgeFields.EMBEDDING, queryVector, fetchSize, filter);
             vectorDocs = searcher.search(vectorQuery, fetchSize);
         }
 
@@ -280,20 +423,50 @@ public class LuceneSearchService {
     }
 
     /**
-     * Search errata by CVE ID (exact match on multi-valued cve_ids field).
+     * Security documents live under doc_type "cve" (Apache advisories) or "errata" (legacy Red Hat errata) depending on
+     * the indexer era — match both. This clause exists because indexer and searcher used to disagree on the value
+     * ("errata" vs "cve"), which made every CVE search silently return zero results.
      */
-    public List<ErrataSearchResult> searchByCve(String cveId) throws IOException {
-        BooleanQuery query = new BooleanQuery.Builder()
-                .add(new TermQuery(new Term(KnowledgeFields.DOMAIN, "apache_camel")), BooleanClause.Occur.MUST)
-                .add(new TermQuery(new Term(KnowledgeFields.DOC_TYPE, "errata")), BooleanClause.Occur.MUST)
-                .add(new TermQuery(new Term(KnowledgeFields.CVE_IDS, cveId)), BooleanClause.Occur.MUST)
+    static BooleanQuery securityDocTypeClause() {
+        return new BooleanQuery.Builder()
+                .add(new TermQuery(new Term(KnowledgeFields.DOC_TYPE, "cve")), BooleanClause.Occur.SHOULD)
+                .add(new TermQuery(new Term(KnowledgeFields.DOC_TYPE, "errata")), BooleanClause.Occur.SHOULD)
                 .build();
+    }
 
-        return executeErrataSearch(query, 20);
+    /** Case variants for exact StringField matching — indexed severities vary ("HIGH" vs "Important"). */
+    private static BooleanQuery caseVariantsClause(String field, String value) {
+        BooleanQuery.Builder b = new BooleanQuery.Builder();
+        for (String v : Set.of(value, value.toUpperCase(Locale.ROOT), value.toLowerCase(Locale.ROOT),
+                value.isEmpty()
+                        ? value
+                        : Character.toUpperCase(value.charAt(0))
+                          + value.substring(1).toLowerCase(Locale.ROOT))) {
+            b.add(new TermQuery(new Term(field, v)), BooleanClause.Occur.SHOULD);
+        }
+        return b.build();
     }
 
     /**
-     * Search errata with structured filters (advisory type, severity, version) and optional free-text.
+     * Search security advisories by CVE ID (exact match on multi-valued cve_ids field).
+     */
+    public List<ErrataSearchResult> searchByCve(String cveId) throws IOException {
+        return searchByCve(searcher, cveId, 20);
+    }
+
+    /** Package-private and static so tests can run it against an in-memory index. */
+    static List<ErrataSearchResult> searchByCve(IndexSearcher searcher, String cveId, int maxResults)
+            throws IOException {
+        BooleanQuery query = new BooleanQuery.Builder()
+                .add(securityDocTypeClause(), BooleanClause.Occur.MUST)
+                .add(new TermQuery(new Term(KnowledgeFields.CVE_IDS, cveId)), BooleanClause.Occur.MUST)
+                .build();
+
+        return executeErrataSearch(searcher, query, maxResults);
+    }
+
+    /**
+     * Search security advisories with structured filters (advisory type, severity, version) and optional free-text.
      */
     public List<ErrataSearchResult> searchErrata(
             String advisoryType, String severity,
@@ -301,45 +474,44 @@ public class LuceneSearchService {
             throws IOException, ParseException {
 
         BooleanQuery.Builder qb = new BooleanQuery.Builder()
-                .add(new TermQuery(new Term(KnowledgeFields.DOMAIN, "apache_camel")), BooleanClause.Occur.MUST)
-                .add(new TermQuery(new Term(KnowledgeFields.DOC_TYPE, "errata")), BooleanClause.Occur.MUST);
+                .add(securityDocTypeClause(), BooleanClause.Occur.MUST);
 
         if (advisoryType != null) {
             qb.add(new TermQuery(new Term(KnowledgeFields.ADVISORY_TYPE, advisoryType)), BooleanClause.Occur.MUST);
         }
         if (severity != null) {
-            qb.add(new TermQuery(new Term(KnowledgeFields.SEVERITY, severity)), BooleanClause.Occur.MUST);
+            qb.add(caseVariantsClause(KnowledgeFields.SEVERITY, severity), BooleanClause.Occur.MUST);
         }
         if (version != null) {
             qb.add(new TermQuery(new Term(KnowledgeFields.FIXED_IN_VERSIONS, version)), BooleanClause.Occur.MUST);
         }
         if (freeText != null && !freeText.isBlank()) {
             QueryParser parser = new QueryParser(KnowledgeFields.CONTENT, analyzer);
-            qb.add(parser.parse(freeText), BooleanClause.Occur.MUST);
+            qb.add(parser.parse(QueryParser.escape(freeText)), BooleanClause.Occur.MUST);
         }
 
-        return executeErrataSearch(qb.build(), maxResults);
+        return executeErrataSearch(searcher, qb.build(), maxResults);
     }
 
     /**
-     * Search errata by fixed-in version (exact match on multi-valued fixed_in_versions field).
+     * Search security advisories by fixed-in version (exact match on multi-valued fixed_in_versions field).
      */
     public List<ErrataSearchResult> searchByVersion(String version, String advisoryType, int maxResults)
             throws IOException {
 
         BooleanQuery.Builder qb = new BooleanQuery.Builder()
-                .add(new TermQuery(new Term(KnowledgeFields.DOMAIN, "apache_camel")), BooleanClause.Occur.MUST)
-                .add(new TermQuery(new Term(KnowledgeFields.DOC_TYPE, "errata")), BooleanClause.Occur.MUST)
+                .add(securityDocTypeClause(), BooleanClause.Occur.MUST)
                 .add(new TermQuery(new Term(KnowledgeFields.FIXED_IN_VERSIONS, version)), BooleanClause.Occur.MUST);
 
         if (advisoryType != null) {
             qb.add(new TermQuery(new Term(KnowledgeFields.ADVISORY_TYPE, advisoryType)), BooleanClause.Occur.MUST);
         }
 
-        return executeErrataSearch(qb.build(), maxResults);
+        return executeErrataSearch(searcher, qb.build(), maxResults);
     }
 
-    private List<ErrataSearchResult> executeErrataSearch(Query query, int maxResults) throws IOException {
+    private static List<ErrataSearchResult> executeErrataSearch(IndexSearcher searcher, Query query, int maxResults)
+            throws IOException {
         TopDocs topDocs = searcher.search(query, maxResults);
         List<ErrataSearchResult> results = new ArrayList<>();
 

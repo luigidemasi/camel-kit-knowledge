@@ -10,11 +10,15 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.yaml.snakeyaml.Yaml;
 
 /**
  * Parses Apache Camel CVE advisories from Markdown files with YAML frontmatter. Optionally enriches with NVD data (CVSS
@@ -68,13 +72,18 @@ public class CveParser {
         String frontmatter = fmMatcher.group(1);
         String body = markdownContent.substring(fmMatcher.end()).trim();
 
-        String cveId = extractField(frontmatter, "cve");
-        String severity = extractField(frontmatter, "severity");
-        String summary = extractField(frontmatter, "summary");
-        String description = extractField(frontmatter, "description");
-        String affected = extractField(frontmatter, "affected");
-        String fixed = extractField(frontmatter, "fixed");
-        String mitigation = extractField(frontmatter, "mitigation");
+        // YAML parse handles multi-line values (advisory descriptions routinely span many lines —
+        // a line-based regex truncates them mid-sentence); regex is the fallback for invalid YAML.
+        Map<String, Object> yaml = parseYamlFrontmatter(frontmatter);
+
+        String cveId = field(yaml, frontmatter, "cve");
+        String severity = field(yaml, frontmatter, "severity");
+        String summary = field(yaml, frontmatter, "summary");
+        String description = field(yaml, frontmatter, "description");
+        String affected = field(yaml, frontmatter, "affected");
+        String fixed = field(yaml, frontmatter, "fixed");
+        String mitigation = field(yaml, frontmatter, "mitigation");
+        // date is a typed YAML timestamp — the regex form preserves the ISO string
         String dateStr = extractField(frontmatter, "date");
 
         // Parse fixed versions (comma-separated, with optional "and")
@@ -142,8 +151,13 @@ public class CveParser {
                         .header("Accept", "application/json")
                         .build();
                 HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-                if (response.statusCode() != 200)
+                if (response.statusCode() != 200) {
+                    // NVD rate-limits unauthenticated clients (~5 req/30s) — without this log,
+                    // missing enrichment on a fresh cache is invisible
+                    LOG.warn("  NVD returned HTTP {} for {} — skipping enrichment", response.statusCode(),
+                            cve.cveId());
                     return cve;
+                }
                 json = response.body();
                 Files.createDirectories(cacheDir);
                 Files.writeString(cacheFile, json);
@@ -153,9 +167,10 @@ public class CveParser {
             }
         }
 
-        // Extract CVSS 3.1 data and CWE from NVD JSON
-        String cvssScore = extractJsonValue(json, "baseScore");
-        String cvssVector = extractJsonValue(json, "vectorString");
+        // Extract CVSS data (v3.1 preferred) and CWE from NVD JSON
+        String[] cvss = extractCvss(json);
+        String cvssScore = cvss[0];
+        String cvssVector = cvss[1];
         String cweId = extractCweFromNvd(json);
 
         return new CveAdvisory(
@@ -199,16 +214,58 @@ public class CveParser {
         return ranges;
     }
 
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> parseYamlFrontmatter(String frontmatter) {
+        try {
+            Object parsed = new Yaml().load(frontmatter);
+            return parsed instanceof Map ? (Map<String, Object>) parsed : null;
+        } catch (Exception e) {
+            LOG.warn("  Frontmatter is not valid YAML, falling back to line-based extraction: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** YAML value when available and string-typed, line-based regex otherwise. */
+    private static String field(Map<String, Object> yaml, String frontmatter, String fieldName) {
+        if (yaml != null && yaml.get(fieldName) instanceof String s && !s.isBlank()) {
+            return s.trim();
+        }
+        return extractField(frontmatter, fieldName);
+    }
+
     private static String extractField(String frontmatter, String fieldName) {
         Pattern p = Pattern.compile("^" + fieldName + ":\\s*\"?(.*?)\"?\\s*$", Pattern.MULTILINE);
         Matcher m = p.matcher(frontmatter);
         return m.find() ? m.group(1).trim() : null;
     }
 
-    private static String extractJsonValue(String json, String key) {
-        Pattern p = Pattern.compile("\"" + key + "\"\\s*:\\s*\"?([^,\"\\}]+)\"?");
-        Matcher m = p.matcher(json);
-        return m.find() ? m.group(1).trim() : null;
+    /**
+     * Extracts [baseScore, vectorString] from an NVD 2.0 response, preferring CVSS v3.1 explicitly — the response
+     * carries multiple metric blocks (v4.0/v3.1/v3.0/v2) in unspecified order, so grabbing the first "baseScore" in the
+     * raw JSON can silently return a v2 or v4 score.
+     */
+    private static String[] extractCvss(String json) {
+        try {
+            JSONArray vulns = new JSONObject(json).optJSONArray("vulnerabilities");
+            if (vulns == null || vulns.isEmpty()) {
+                return new String[]{null, null};
+            }
+            JSONObject metrics = vulns.getJSONObject(0).getJSONObject("cve").optJSONObject("metrics");
+            if (metrics == null) {
+                return new String[]{null, null};
+            }
+            for (String key : new String[]{"cvssMetricV31", "cvssMetricV30", "cvssMetricV40", "cvssMetricV2"}) {
+                JSONArray metricArray = metrics.optJSONArray(key);
+                if (metricArray != null && !metricArray.isEmpty()) {
+                    JSONObject cvssData = metricArray.getJSONObject(0).getJSONObject("cvssData");
+                    String score = cvssData.has("baseScore") ? String.valueOf(cvssData.get("baseScore")) : null;
+                    return new String[]{score, cvssData.optString("vectorString", null)};
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("  Failed to parse NVD CVSS data: {}", e.getMessage());
+        }
+        return new String[]{null, null};
     }
 
     private static String extractCweFromNvd(String json) {

@@ -190,7 +190,9 @@ public class ApacheCamelDomain implements DocumentDomain {
             }
 
             jiraPool.shutdown();
-            jiraPool.awaitTermination(2, TimeUnit.HOURS);
+            if (!jiraPool.awaitTermination(2, TimeUnit.HOURS)) {
+                throw new IOException("JIRA pre-fetch timed out after 2 hours — refusing to build a partial index");
+            }
             LOG.info("  JIRA fetch complete: {}/{} enriched",
                     jiraCache.size(), total);
         }
@@ -238,11 +240,10 @@ public class ApacheCamelDomain implements DocumentDomain {
                 for (Section section : result.otherSections()) {
                     String slug = slugify(section.title());
                     String id = chunkId(doc.version, doc.docType, doc.shortName, slug);
-                    String component = extractComponentName(section.title());
 
                     chunks.add(new DocumentChunk(
                             id, "apache-camel", doc.docType,
-                            doc.version, null, component,
+                            doc.version, null, null,
                             section.title(), section.content(),
                             doc.runtimes, null,
                             null, null, null, null, null));
@@ -259,12 +260,14 @@ public class ApacheCamelDomain implements DocumentDomain {
                 // Standard section-based chunking for component docs, EIPs, user manual, etc.
                 List<Section> sections = sectionChunker.chunk(doc.markdown);
 
+                // The component field feeds exact-match lookup ("does component X exist?") — only
+                // populate it for doc types that actually describe components, otherwise every
+                // user-manual page and EIP pollutes the lookup space with pseudo-components.
+                String component = isComponentDocType(doc.docType) ? doc.component : null;
+
                 for (Section section : sections) {
                     String slug = slugify(section.title());
                     String id = chunkId(doc.version, doc.docType, doc.shortName, slug);
-                    String component = doc.component != null
-                            ? doc.component
-                            : extractComponentName(section.title());
 
                     chunks.add(new DocumentChunk(
                             id, "apache-camel", doc.docType,
@@ -375,7 +378,10 @@ public class ApacheCamelDomain implements DocumentDomain {
 
         pool.shutdown();
         try {
-            pool.awaitTermination(30, TimeUnit.MINUTES);
+            if (!pool.awaitTermination(30, TimeUnit.MINUTES)) {
+                throw new IOException(
+                        "Repo download phase timed out after 30 minutes — refusing to build a partial index");
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Download phase interrupted", e);
@@ -385,7 +391,13 @@ public class ApacheCamelDomain implements DocumentDomain {
         LOG.info("  All repos downloaded: {}/{} succeeded ({}s)",
                 repoPaths.size(), tasks.size(), dlElapsed);
         if (!errors.isEmpty()) {
-            LOG.warn("  {} repos failed: {}", errors.size(), errors);
+            // A partial corpus silently becomes "this doesn't exist" answers downstream — fail loudly
+            if (!Boolean.getBoolean("index.allowPartial")) {
+                throw new IOException(
+                        "Failed to download " + errors.size() + " repos: " + errors
+                                      + " (set -Dindex.allowPartial=true to build anyway)");
+            }
+            LOG.warn("  {} repos failed (continuing, -Dindex.allowPartial=true): {}", errors.size(), errors);
         }
 
         // ── Phase 1b: Convert docs sequentially (AsciidoctorJ not thread-safe) ──
@@ -649,7 +661,7 @@ public class ApacheCamelDomain implements DocumentDomain {
     }
 
     /**
-     * Extract component name from section title, similar to RhBuildCamelDomain.
+     * Extract component name from a release-note issue description or section title.
      */
     private String extractComponentName(String title) {
         if (title == null)
@@ -675,6 +687,17 @@ public class ApacheCamelDomain implements DocumentDomain {
         }
 
         return null;
+    }
+
+    /**
+     * Doc types whose documents describe a component — the only ones allowed to populate the exact-match component
+     * field.
+     */
+    static boolean isComponentDocType(String docType) {
+        return switch (docType) {
+            case "component", "quarkus-extension", "spring-boot-starter" -> true;
+            default -> false;
+        };
     }
 
     /**

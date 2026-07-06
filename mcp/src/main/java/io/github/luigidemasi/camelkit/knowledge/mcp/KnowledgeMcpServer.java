@@ -2,26 +2,42 @@ package io.github.luigidemasi.camelkit.knowledge.mcp;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import jakarta.inject.Inject;
 
+import org.apache.camel.catalog.CamelCatalog;
+import org.apache.camel.catalog.DefaultCamelCatalog;
+import org.apache.camel.catalog.EndpointValidationResult;
+
 import io.quarkiverse.mcp.server.Tool;
 import io.quarkiverse.mcp.server.ToolArg;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- * MCP server exposing Apache Camel community documentation search tools. 5 tools with camel_docs_* prefix.
+ * MCP server exposing Apache Camel community documentation search tools (camel_docs_* prefix).
  */
 public class KnowledgeMcpServer {
 
+    private static final Logger LOG = LoggerFactory.getLogger(KnowledgeMcpServer.class);
+
     private static final String DOMAIN = "apache_camel";
+    private static final int MAX_RESULTS_CAP = 25;
+    private static final Pattern MINOR_VERSION_PATTERN = Pattern.compile("^(\\d+\\.\\d+)");
 
     @Inject
     LuceneSearchService searchService;
 
+    /** Catalog for deterministic endpoint validation. Bundles a single Camel version's metadata. */
+    private final CamelCatalog catalog = new DefaultCamelCatalog(true);
+
     @Tool(description = "Look up Apache Camel documentation for a specific component. " +
-                        "Returns component reference, usage examples, configuration options, and related CVEs. " +
-                        "Use to check if a component exists and get its documentation.")
+                        "Returns component reference, usage examples, and configuration options. " +
+                        "The 'match' field distinguishes exact catalog hits from fuzzy full-text fallback — " +
+                        "'fuzzy' means the component name was NOT found verbatim and results are nearest matches only.")
     public String camel_docs_component_info(
             @ToolArg(description = "Component name, e.g., 'kafka', 'http', 'amqp'") String component,
             @ToolArg(description = "Camel version, e.g., '4.14'. Optional — omit for all versions.",
@@ -38,18 +54,21 @@ public class KnowledgeMcpServer {
                 results = searchService.lookupComponent(DOMAIN, component, version, null);
             }
 
+            String match = "exact";
             if (results.isEmpty()) {
+                match = "fuzzy";
                 String query = "camel-" + component + " component";
                 results = searchService.search(DOMAIN, query, version, null, 5);
             }
 
             if (results.isEmpty()) {
-                return "{\"found\":false,\"results\":[]}";
+                logZeroHit("component_info", component);
+                return "{\"found\":false,\"match\":\"none\",\"results\":[]}";
             }
 
-            return formatResults(results);
+            return formatResults(results, match);
         } catch (Exception e) {
-            return "{\"error\":\"" + escape(e.getMessage()) + "\"}";
+            return errorJson(e);
         }
     }
 
@@ -58,15 +77,19 @@ public class KnowledgeMcpServer {
                         "getting started guides, and release notes.")
     public String camel_docs_search(
             @ToolArg(description = "Search query, e.g., 'configure SSL for HTTP component'") String query,
-            @ToolArg(description = "Camel version filter, e.g., '4.14'. Optional.", required = false) String version,
-            @ToolArg(description = "Maximum results to return (default 5)", required = false) Integer max_results) {
+            @ToolArg(description = "Camel version filter (major.minor, e.g., '4.14'). Optional.",
+                     required = false) String version,
+            @ToolArg(description = "Maximum results to return (default 5, max 25)",
+                     required = false) Integer max_results) {
         try {
-            int maxResults = max_results != null ? max_results : 5;
             List<LuceneSearchService.SearchResult> results
-                    = searchService.search(DOMAIN, query, version, null, maxResults);
-            return formatResults(results);
+                    = searchService.search(DOMAIN, query, normalizeMinor(version), null, clamp(max_results, 5));
+            if (results.isEmpty()) {
+                logZeroHit("search", query);
+            }
+            return formatResults(results, null);
         } catch (Exception e) {
-            return "{\"error\":\"" + escape(e.getMessage()) + "\"}";
+            return errorJson(e);
         }
     }
 
@@ -81,12 +104,14 @@ public class KnowledgeMcpServer {
                      required = false) String severity,
             @ToolArg(description = "Camel version to check for CVEs, e.g., '4.14'. Optional.",
                      required = false) String version,
-            @ToolArg(description = "Maximum results (default 10)", required = false) Integer max_results) {
+            @ToolArg(description = "Maximum results (default 10, max 25)", required = false) Integer max_results) {
         try {
-            int maxResults = max_results != null ? max_results : 10;
-
             if (cve_id != null && !cve_id.isBlank()) {
-                List<LuceneSearchService.ErrataSearchResult> results = searchService.searchByCve(cve_id);
+                List<LuceneSearchService.ErrataSearchResult> results
+                        = searchService.searchByCve(cve_id.trim().toUpperCase(Locale.ROOT));
+                if (results.isEmpty()) {
+                    logZeroHit("cve_search", cve_id);
+                }
                 return formatErrataResults(results);
             }
 
@@ -98,10 +123,14 @@ public class KnowledgeMcpServer {
             query.append("CVE security vulnerability");
 
             List<LuceneSearchService.ErrataSearchResult> results
-                    = searchService.searchErrata(null, severity, version, query.toString().trim(), maxResults);
+                    = searchService.searchErrata(null, severity, version, query.toString().trim(),
+                            clamp(max_results, 10));
+            if (results.isEmpty()) {
+                logZeroHit("cve_search", query.toString());
+            }
             return formatErrataResults(results);
         } catch (Exception e) {
-            return "{\"error\":\"" + escape(e.getMessage()) + "\"}";
+            return errorJson(e);
         }
     }
 
@@ -109,14 +138,17 @@ public class KnowledgeMcpServer {
                         "Returns new features, bug fixes, and JIRA issues included in the release.")
     public String camel_docs_release_info(
             @ToolArg(description = "Camel version, e.g., '4.14', '4.18.1'") String version,
-            @ToolArg(description = "Maximum results (default 20)", required = false) Integer max_results) {
+            @ToolArg(description = "Maximum results (default 20, max 25)", required = false) Integer max_results) {
         try {
-            int maxResults = max_results != null ? max_results : 20;
-            List<LuceneSearchService.SearchResult> results
-                    = searchService.search(DOMAIN, "release " + version, version, "release-notes", maxResults);
-            return formatResults(results);
+            List<LuceneSearchService.SearchResult> results = searchService.search(
+                    DOMAIN, "release " + version, normalizeMinor(version), null, "release-notes",
+                    clamp(max_results, 20));
+            if (results.isEmpty()) {
+                logZeroHit("release_info", version);
+            }
+            return formatResults(results, null);
         } catch (Exception e) {
-            return "{\"error\":\"" + escape(e.getMessage()) + "\"}";
+            return errorJson(e);
         }
     }
 
@@ -126,16 +158,95 @@ public class KnowledgeMcpServer {
             @ToolArg(description = "JIRA issue ID, e.g., 'CAMEL-22784'") String jira_id) {
         try {
             List<LuceneSearchService.SearchResult> results
-                    = searchService.searchByJiraId(jira_id.toUpperCase(Locale.ROOT));
+                    = searchService.searchByJiraId(jira_id.trim().toUpperCase(Locale.ROOT));
 
             if (results.isEmpty()) {
+                logZeroHit("jira_lookup", jira_id);
                 return "{\"found\":false,\"jira_id\":\"" + escape(jira_id) + "\",\"results\":[]}";
             }
 
-            return formatResults(results);
+            return formatResults(results, null);
         } catch (Exception e) {
-            return "{\"error\":\"" + escape(e.getMessage()) + "\"}";
+            return errorJson(e);
         }
+    }
+
+    @Tool(description = "Validate a Camel endpoint URI against the Camel catalog. " +
+                        "Deterministically checks that the component exists and that every option name, type, and " +
+                        "enum value is valid — use this to verify generated endpoint URIs instead of guessing. " +
+                        "Validation runs against a single bundled catalog version (reported in the response).")
+    public String camel_docs_validate_endpoint(
+            @ToolArg(description = "Endpoint URI to validate, e.g., 'kafka:myTopic?brokers=localhost:9092'") String uri) {
+        try {
+            EndpointValidationResult result = catalog.validateEndpointProperties(uri);
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("{\"valid\":").append(result.isSuccess());
+            sb.append(",\"catalog_version\":\"").append(escape(catalog.getCatalogVersion())).append('"');
+            sb.append(",\"uri\":\"").append(escape(uri)).append('"');
+            if (result.getUnknownComponent() != null) {
+                sb.append(",\"unknown_component\":\"").append(escape(result.getUnknownComponent())).append('"');
+            }
+            if (result.getSyntaxError() != null) {
+                sb.append(",\"syntax_error\":\"").append(escape(result.getSyntaxError())).append('"');
+            }
+            appendStringArray(sb, "unknown_options", result.getUnknown());
+            appendStringArray(sb, "missing_required", result.getRequired());
+            if (!result.isSuccess()) {
+                String summary = result.summaryErrorMessage(false);
+                if (summary != null) {
+                    sb.append(",\"summary\":\"").append(escape(summary)).append('"');
+                }
+            }
+            sb.append('}');
+            return sb.toString();
+        } catch (Exception e) {
+            return errorJson(e);
+        }
+    }
+
+    @Tool(description = "Get knowledge index metadata: covered Camel versions, document counts per type, " +
+                        "embedding model, and the active search mode. Use this to check whether a version or topic " +
+                        "is covered before trusting empty search results.")
+    public String camel_docs_index_info() {
+        try {
+            LuceneSearchService.IndexInfo info = searchService.indexInfo();
+            String docTypes = info.docTypeCounts().entrySet().stream()
+                    .map(e -> "\"" + escape(e.getKey()) + "\":" + e.getValue())
+                    .collect(Collectors.joining(","));
+            String versions = info.versions().stream()
+                    .map(v -> "\"" + escape(v) + "\"")
+                    .collect(Collectors.joining(","));
+            return "{\"total_docs\":" + info.totalDocs()
+                   + ",\"embedding_model\":\""
+                   + escape(info.embeddingModel() != null ? info.embeddingModel() : "unknown") + "\""
+                   + ",\"search_mode\":\"" + escape(info.searchMode()) + "\""
+                   + ",\"versions\":[" + versions + "]"
+                   + ",\"doc_types\":{" + docTypes + "}}";
+        } catch (Exception e) {
+            return errorJson(e);
+        }
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────
+
+    private static int clamp(Integer maxResults, int defaultValue) {
+        int v = maxResults != null ? maxResults : defaultValue;
+        return Math.max(1, Math.min(v, MAX_RESULTS_CAP));
+    }
+
+    /** Index versions are major.minor — normalize '4.18.1' to '4.18' so exact term filters match. */
+    private static String normalizeMinor(String version) {
+        if (version == null || version.isBlank()) {
+            return null;
+        }
+        Matcher m = MINOR_VERSION_PATTERN.matcher(version.trim());
+        return m.find() ? m.group(1) : version.trim();
+    }
+
+    private void logZeroHit(String tool, String query) {
+        // Coverage backlog: what clients needed and the index could not answer
+        LOG.info("zero-hit: tool={} query=\"{}\"", tool, query);
     }
 
     private String normalizeRuntime(String runtime) {
@@ -150,7 +261,20 @@ public class KnowledgeMcpServer {
         };
     }
 
-    private String formatResults(List<LuceneSearchService.SearchResult> results) {
+    private String errorJson(Exception e) {
+        return "{\"error\":\"" + escape(e.getMessage()) + "\"}";
+    }
+
+    private static void appendStringArray(StringBuilder sb, String name, java.util.Set<String> values) {
+        if (values == null || values.isEmpty()) {
+            return;
+        }
+        sb.append(",\"").append(name).append("\":[");
+        sb.append(values.stream().map(v -> "\"" + escape(v) + "\"").collect(Collectors.joining(",")));
+        sb.append(']');
+    }
+
+    private String formatResults(List<LuceneSearchService.SearchResult> results, String match) {
         String items = results.stream()
                 .map(r -> {
                     String runtimeArray = r.runtimes().stream()
@@ -168,7 +292,11 @@ public class KnowledgeMcpServer {
                 })
                 .collect(Collectors.joining(","));
 
-        return "{\"found\":true,\"total_hits\":" + results.size() + ",\"results\":[" + items + "]}";
+        return "{\"found\":" + !results.isEmpty()
+               + ",\"total_hits\":" + results.size()
+               + (match != null ? ",\"match\":\"" + match + "\"" : "")
+               + ",\"search_mode\":\"" + escape(searchService.searchMode()) + "\""
+               + ",\"results\":[" + items + "]}";
     }
 
     private String formatErrataResults(List<LuceneSearchService.ErrataSearchResult> results) {
@@ -192,15 +320,36 @@ public class KnowledgeMcpServer {
                 })
                 .collect(Collectors.joining(","));
 
-        return "{\"found\":true,\"total_hits\":" + results.size() + ",\"results\":[" + items + "]}";
+        return "{\"found\":" + !results.isEmpty()
+               + ",\"total_hits\":" + results.size()
+               + ",\"results\":[" + items + "]}";
     }
 
-    private String escape(String s) {
+    /** JSON string escaping including all control characters (tabs and friends appear in doc content). */
+    private static String escape(String s) {
         if (s == null)
             return "";
-        return s.replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "");
+        StringBuilder sb = new StringBuilder(s.length() + 16);
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '\\' -> sb.append("\\\\");
+                case '"' -> sb.append("\\\"");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                case '\b' -> sb.append("\\b");
+                case '\f' -> sb.append("\\f");
+                default -> {
+                    if (c < 0x20) {
+                        sb.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        return sb.toString();
     }
+
 }

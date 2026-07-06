@@ -155,6 +155,8 @@ public class IndexResolver {
             if (result.getMetadata() != null && result.getMetadata().getFile() != null) {
                 String version = parseLatestVersion(result.getMetadata().getFile().toPath());
                 if (version != null) {
+                    // lexicographic compare is correct for the fixed-width yyyyMMddHHmm revision
+                    // scheme; it breaks for semver ("4.10" < "4.9") — revisit if the scheme changes
                     if (latestVersion == null || version.compareTo(latestVersion) > 0) {
                         latestVersion = version;
                     }
@@ -239,9 +241,13 @@ public class IndexResolver {
                         if (fileName.equals("INDEX_FILES") || fileName.equals(".gitkeep")) {
                             continue;
                         }
+                        Path target = tempDir.resolve(fileName).normalize();
+                        if (!target.startsWith(tempDir)) {
+                            // zip-slip guard: never write outside the extraction dir
+                            continue;
+                        }
                         try (InputStream is = jarFile.getInputStream(entry)) {
-                            Files.copy(is, tempDir.resolve(fileName),
-                                    StandardCopyOption.REPLACE_EXISTING);
+                            Files.copy(is, target, StandardCopyOption.REPLACE_EXISTING);
                         }
                     }
                 }

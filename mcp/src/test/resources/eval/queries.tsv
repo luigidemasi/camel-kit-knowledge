@@ -1,0 +1,24 @@
+# Retrieval evaluation queries. Columns: queryId <TAB> type <TAB> query text
+# Curated against the shipped index (see RetrievalQualityTest#dumpCorpus).
+# Grow this set over time — best source: real queries issued by camel-kit skills
+# against the MCP server (zero-hit log), plus doc-derived questions.
+comp-kafka	component	how to configure the Kafka component
+comp-amqp	component	send messages to an AMQP broker
+comp-file	component	read and write files from a directory
+comp-http	component	call a REST endpoint over HTTP from a Camel route
+comp-sql	component	run SQL queries against a database from a route
+comp-activemq	component	consume messages from an ActiveMQ queue
+comp-platform-http	component	expose an HTTP service with platform-http
+comp-azure-sb	component	produce and consume messages with Azure Service Bus
+eip-aggregate	eip	aggregate multiple messages into a single message
+eip-split	eip	split a message into multiple parts and process each part
+eip-choice	eip	route messages to different endpoints based on content
+eip-dlc	eip	retry failed messages and move them to a dead letter queue
+eip-throttle	eip	throttle the number of messages sent to an endpoint
+cve-29891	cve	CVE-2025-29891 details and fixed versions
+cve-bean-injection	cve	Camel message header injection vulnerability affecting camel-bean
+rel-4140	release	what changed in the Camel 4.14.0 release
+rel-4180	release	Camel 4.18 release new features
+mig-removed	migration	removed components when migrating from Camel 3 to Camel 4
+mig-junit	migration	JUnit 4 changes when upgrading to Camel 4
+um-report-plugin	user-manual	validate Camel routes with the report maven plugin

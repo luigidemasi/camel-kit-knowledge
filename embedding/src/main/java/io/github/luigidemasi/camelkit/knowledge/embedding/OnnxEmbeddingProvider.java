@@ -23,7 +23,11 @@ public class OnnxEmbeddingProvider implements EmbeddingProvider {
 
     private static final Logger LOG = LoggerFactory.getLogger(OnnxEmbeddingProvider.class);
     private static final int DIMENSIONS = 384;
-    private static final int MAX_SEQ_LENGTH = 512;
+    /**
+     * Max tokens embedded per chunk. The model (ModernBERT) supports 8192; default is a latency/quality middle ground.
+     * Override with -Dembedding.maxLength. Changing this requires a full reindex to take effect on indexed vectors.
+     */
+    private static final int MAX_SEQ_LENGTH = Integer.getInteger("embedding.maxLength", 2048);
     private static final String MODEL_FILE = "models/model_quantized.onnx";
     private static final String MODEL_DATA_FILE = "models/model_quantized.onnx_data";
     private static final String TOKENIZER_FILE = "models/tokenizer.json";
@@ -37,24 +41,17 @@ public class OnnxEmbeddingProvider implements EmbeddingProvider {
     public float[] embed(String text) {
         ensureInitialized();
         try {
-            // Tokenize
+            // Tokenize (tokenizer is configured with truncation at MAX_SEQ_LENGTH)
             Encoding encoding = tokenizer.encode(text);
             long[] inputIds = encoding.getIds();
             long[] attentionMask = encoding.getAttentionMask();
 
-            // Truncate to max sequence length
-            int seqLen = Math.min(inputIds.length, MAX_SEQ_LENGTH);
-            long[] truncatedIds = new long[seqLen];
-            long[] truncatedMask = new long[seqLen];
-            System.arraycopy(inputIds, 0, truncatedIds, 0, seqLen);
-            System.arraycopy(attentionMask, 0, truncatedMask, 0, seqLen);
-
             // Create ONNX tensors — shape [1, seqLen]
-            long[] shape = {1, seqLen};
+            long[] shape = {1, inputIds.length};
             OnnxTensor inputIdsTensor = OnnxTensor.createTensor(env,
-                    LongBuffer.wrap(truncatedIds), shape);
+                    LongBuffer.wrap(inputIds), shape);
             OnnxTensor attentionMaskTensor = OnnxTensor.createTensor(env,
-                    LongBuffer.wrap(truncatedMask), shape);
+                    LongBuffer.wrap(attentionMask), shape);
 
             Map<String, OnnxTensor> inputs = new LinkedHashMap<>();
             inputs.put("input_ids", inputIdsTensor);
@@ -67,7 +64,7 @@ public class OnnxEmbeddingProvider implements EmbeddingProvider {
 
                 if (output instanceof float[][][]) {
                     // Token-level output [1, seqLen, dims] — mean pooling needed
-                    pooled = meanPool(((float[][][]) output)[0], truncatedMask);
+                    pooled = meanPool(((float[][][]) output)[0], attentionMask);
                 } else if (output instanceof float[][]) {
                     // Already pooled [1, dims]
                     pooled = ((float[][]) output)[0];
@@ -90,6 +87,11 @@ public class OnnxEmbeddingProvider implements EmbeddingProvider {
     @Override
     public int dimensions() {
         return DIMENSIONS;
+    }
+
+    @Override
+    public String modelId() {
+        return "granite-embedding-small-english-r2-q8";
     }
 
     private float[] meanPool(float[][] tokenEmbeddings, long[] attentionMask) {

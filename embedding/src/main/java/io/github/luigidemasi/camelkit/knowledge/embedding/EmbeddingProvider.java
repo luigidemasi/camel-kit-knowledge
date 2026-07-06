@@ -17,4 +17,12 @@ public interface EmbeddingProvider {
      * @return the number of dimensions in the embedding vector
      */
     int dimensions();
+
+    /**
+     * Stable identifier of the underlying model. Stamped into the index at build time and compared at query time —
+     * vectors from different models are silently incompatible even when dimensions match.
+     */
+    default String modelId() {
+        return "unknown";
+    }
 }

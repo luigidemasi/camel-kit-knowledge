@@ -8,8 +8,8 @@ import java.util.List;
 public record DocumentChunk(
         String id,              // unique chunk ID
         String source,          // e.g., "apache-camel"
-        String docType,         // e.g., "guide", "release-notes", "errata"
-        String sourceVersion,   // e.g., "2.x" (nullable)
+        String docType,         // e.g., "component", "release-notes", "cve"
+        String sourceVersion,   // e.g., "4.14" (nullable)
         String targetVersion,   // e.g., "4.x" (nullable)
         String component,       // exact component name for lookup (nullable)
         String sectionTitle,    // section heading
@@ -18,12 +18,13 @@ public record DocumentChunk(
         List<String> runtimes,
         // JIRA issue IDs referenced in this chunk (multi-valued, nullable)
         List<String> jiraIds,
-        // Errata-specific fields (all nullable for non-errata chunks)
-        String erratumId,       // e.g., "RHSA-2026:0467"
-        String advisoryType,    // e.g., "Security Advisory", "Bug Fix", "Enhancement"
-        String severity,        // e.g., "Critical", "Important", "Moderate", "Low"
+        // Security-advisory fields (all nullable for non-security chunks; erratumId/advisoryType are
+        // only populated by legacy errata indexes and kept for compatibility with them)
+        String erratumId,       // legacy errata only (nullable)
+        String advisoryType,    // legacy errata only (nullable)
+        String severity,        // e.g., "LOW", "MEDIUM", "HIGH", "CRITICAL"
         List<String> cveIds,    // CVE identifiers (multi-valued)
-        List<String> fixedInVersions // product versions where this erratum applies (multi-valued)
+        List<String> fixedInVersions // versions where the advisory is fixed (multi-valued)
 ) {
     /** Convenience constructor for non-errata chunks (backwards compatible). */
     public DocumentChunk(String id, String source, String docType,
