@@ -106,4 +106,16 @@ public class KnowledgeDocument {
     public Document build() {
         return doc;
     }
+
+    /**
+     * Index-level metadata document (well-known ID {@link KnowledgeFields#INDEX_META_ID}). Records the embedding model
+     * the index vectors were built with, so the MCP server can refuse to run vector queries against an incompatible
+     * index.
+     */
+    public static Document indexMeta(String embeddingModel) {
+        Document doc = new Document();
+        doc.add(new StringField(KnowledgeFields.ID, KnowledgeFields.INDEX_META_ID, Store.YES));
+        doc.add(new StringField(KnowledgeFields.EMBEDDING_MODEL, embeddingModel, Store.YES));
+        return doc;
+    }
 }

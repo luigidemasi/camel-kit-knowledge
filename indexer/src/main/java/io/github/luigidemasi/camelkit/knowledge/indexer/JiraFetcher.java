@@ -41,6 +41,9 @@ public class JiraFetcher {
 
     private static final Set<String> KNOWN_PREFIXES = Set.of("CAMEL");
 
+    /** Cached sentinel for 404s — avoids re-hitting Apache JIRA for issues that will never resolve. */
+    private static final String NOT_FOUND_SENTINEL = "{\"camelKitNotFound\":true}";
+
     private final HttpClient httpClient;
     private final Path cacheDir;
 
@@ -118,6 +121,9 @@ public class JiraFetcher {
                 Files.writeString(cacheFile, json);
             }
 
+            if (NOT_FOUND_SENTINEL.equals(json.trim())) {
+                return null;
+            }
             return parseIssue(jiraId, json);
         } catch (Exception e) {
             LOG.warn("  Failed to fetch JIRA {}: {}", jiraId, e.getMessage());
@@ -172,7 +178,7 @@ public class JiraFetcher {
                     return null;
                 } else if (response.statusCode() == 404) {
                     LOG.warn("  JIRA {} not found (404)", jiraId);
-                    return null;
+                    return NOT_FOUND_SENTINEL;
                 } else {
                     LOG.warn("  JIRA {} returned HTTP {}", jiraId, response.statusCode());
                     return null;

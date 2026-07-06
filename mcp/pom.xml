@@ -58,6 +58,13 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- Camel catalog for deterministic endpoint validation (camel_docs_validate_endpoint) -->
+        <dependency>
+            <groupId>org.apache.camel</groupId>
+            <artifactId>camel-catalog</artifactId>
+            <version>4.21.0</version>
+        </dependency>
+
         <!-- Lucene search -->
         <dependency>
             <groupId>org.apache.lucene</groupId>
@@ -151,6 +158,37 @@
                             <url>https://huggingface.co/onnx-community/granite-embedding-small-english-r2-ONNX/resolve/main/onnx/model_quantized.onnx_data</url>
                             <outputDirectory>${project.basedir}/src/main/resources/models</outputDirectory>
                             <outputFileName>model_quantized.onnx_data</outputFileName>
+                            <skipCache>false</skipCache>
+                            <overwrite>false</overwrite>
+                            <readTimeOut>120000</readTimeOut>
+                        </configuration>
+                    </execution>
+                    <!-- Cross-encoder reranker (ms-marco-MiniLM-L-6-v2, Q8 quantized, ~23 MB) -->
+                    <execution>
+                        <id>download-reranker-model</id>
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>wget</goal>
+                        </goals>
+                        <configuration>
+                            <url>https://huggingface.co/Xenova/ms-marco-MiniLM-L-6-v2/resolve/main/onnx/model_quantized.onnx</url>
+                            <outputDirectory>${project.basedir}/src/main/resources/models</outputDirectory>
+                            <outputFileName>reranker_quantized.onnx</outputFileName>
+                            <skipCache>false</skipCache>
+                            <overwrite>false</overwrite>
+                            <readTimeOut>120000</readTimeOut>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>download-reranker-tokenizer</id>
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>wget</goal>
+                        </goals>
+                        <configuration>
+                            <url>https://huggingface.co/Xenova/ms-marco-MiniLM-L-6-v2/resolve/main/tokenizer.json</url>
+                            <outputDirectory>${project.basedir}/src/main/resources/models</outputDirectory>
+                            <outputFileName>reranker-tokenizer.json</outputFileName>
                             <skipCache>false</skipCache>
                             <overwrite>false</overwrite>
                             <readTimeOut>120000</readTimeOut>

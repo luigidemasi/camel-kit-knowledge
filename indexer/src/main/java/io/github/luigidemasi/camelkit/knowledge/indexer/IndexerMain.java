@@ -19,7 +19,7 @@ import org.slf4j.LoggerFactory;
  * Usage: java -cp indexer.jar io.github.luigidemasi.camelkit.knowledge.indexer.IndexerMain [output-dir]
  *
  * System properties (override automatic path resolution): -Dindex.output=path Output directory for the Lucene index
- * -Dindex.resources=path Indexer resources directory (HTML guides, errata JSON) -Dindex.cache=path Docling markdown
+ * -Dindex.resources=path Indexer resources directory (git repo clones, JIRA/CVE caches) -Dindex.cache=path document
  * cache directory
  *
  */

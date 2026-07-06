@@ -9,6 +9,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -296,13 +297,18 @@ public class CamelCatalogIndexer {
                         .GET()
                         .build();
 
+                // Download to a temp file and move atomically — an interrupted download must not
+                // leave a truncated JAR that passes the cache check on the next run
+                Path tmpPath = jarPath.resolveSibling(jarName + ".part");
                 HttpResponse<Path> response = client.send(getRequest,
-                        HttpResponse.BodyHandlers.ofFile(jarPath));
+                        HttpResponse.BodyHandlers.ofFile(tmpPath));
 
                 if (response.statusCode() == 200) {
+                    Files.move(tmpPath, jarPath, StandardCopyOption.REPLACE_EXISTING,
+                            StandardCopyOption.ATOMIC_MOVE);
                     return jarPath;
                 }
-                Files.deleteIfExists(jarPath);
+                Files.deleteIfExists(tmpPath);
             }
         }
 

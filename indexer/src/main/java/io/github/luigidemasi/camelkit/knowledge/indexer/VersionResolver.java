@@ -304,8 +304,13 @@ public class VersionResolver {
                 if (response.statusCode() == 200) {
                     QuarkusMapping mapping = parseQuarkusPom(response.body());
                     if (mapping != null) {
-                        camelMinorToQuarkusMinor.put(mapping.camelMinor(), qMinor);
-                        LOG.info("  Quarkus {} -> Camel {}", qMinor, mapping.camelMinor());
+                        // Several quarkus minors can target the same camel minor — keep the newest
+                        // deterministically instead of whichever tag happens to be iterated last
+                        String existing = camelMinorToQuarkusMinor.get(mapping.camelMinor());
+                        if (existing == null || compareVersions(qMinor, existing) > 0) {
+                            camelMinorToQuarkusMinor.put(mapping.camelMinor(), qMinor);
+                            LOG.info("  Quarkus {} -> Camel {}", qMinor, mapping.camelMinor());
+                        }
                     }
                 }
             } catch (Exception e) {

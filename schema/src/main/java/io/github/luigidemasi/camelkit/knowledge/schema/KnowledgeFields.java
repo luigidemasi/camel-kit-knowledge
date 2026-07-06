@@ -51,4 +51,10 @@ public final class KnowledgeFields {
 
     // Domain metadata (stored once per domain, JSON-encoded)
     public static final String DOMAIN_META = "_domain_meta";
+
+    // Index-level metadata document (single doc with this well-known ID)
+    public static final String INDEX_META_ID = "__index_meta__";
+    // Embedding model the index vectors were built with — checked against the
+    // runtime model at MCP startup; mismatch disables the vector leg
+    public static final String EMBEDDING_MODEL = "embedding_model";
 }

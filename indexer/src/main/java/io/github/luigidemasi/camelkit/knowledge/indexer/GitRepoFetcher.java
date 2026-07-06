@@ -47,7 +47,7 @@ public class GitRepoFetcher {
 
         if (Files.isDirectory(repoDir.resolve(".git"))) {
             // Existing clone — fetch latest and reset working tree
-            return updateRepo(repoDir, refName, localName);
+            return updateRepo(repoUrl, repoDir, refName, localName);
         }
 
         // Delete any partial/corrupted directory (no .git = not a valid repo)
@@ -114,7 +114,7 @@ public class GitRepoFetcher {
      * Update an existing repo by fetching latest changes and resetting the working tree. Much faster than a full clone
      * — only downloads the delta.
      */
-    private Path updateRepo(Path repoDir, String refName, String localName) throws IOException {
+    private Path updateRepo(String repoUrl, Path repoDir, String refName, String localName) throws IOException {
         LOG.info("  Updating {} ({}) ...", localName, refName);
 
         long start = System.currentTimeMillis();
@@ -139,7 +139,7 @@ public class GitRepoFetcher {
             // Update failed — fall back to fresh clone
             LOG.warn("  Update failed for {}: {} — re-cloning", localName, e.getMessage());
             deleteDirectory(repoDir);
-            return cloneRepo(null, refName, localName, repoDir);
+            return cloneRepo(repoUrl, refName, localName, repoDir);
         }
 
         return repoDir;

@@ -21,12 +21,18 @@ import org.asciidoctor.Asciidoctor;
 import org.asciidoctor.Options;
 import org.asciidoctor.SafeMode;
 import org.json.JSONObject;
+import org.slf4j.LoggerFactory;
 
 /**
  * Converts AsciiDoc files to HTML using AsciidoctorJ. Pure Java — no Docker or external process needed. Thread-safe:
  * Asciidoctor instance is created once and reused.
  */
 public class AsciidocConverter {
+
+    private static final org.slf4j.Logger LOG = LoggerFactory.getLogger(AsciidocConverter.class);
+
+    /** Strong reference so the JUL level override is not garbage-collected away. */
+    private static final Logger ASCIIDOCTOR_JUL_LOGGER = Logger.getLogger("asciidoctor");
 
     private final Asciidoctor asciidoctor;
     private final Options options;
@@ -45,8 +51,9 @@ public class AsciidocConverter {
         // Suppress AsciidoctorJ logs for missing includes —
         // Camel docs reference generated JSON data files (option tables)
         // that only exist after a full Maven build, not in a plain checkout.
-        // SEVERE > WARNING in JUL hierarchy, so OFF is needed to suppress all.
-        Logger.getLogger("").setLevel(Level.OFF);
+        // Scoped to the "asciidoctor" logger only: silencing the JUL ROOT logger
+        // would black out every other JUL-logging library in the process.
+        ASCIIDOCTOR_JUL_LOGGER.setLevel(Level.OFF);
 
         this.asciidoctor = Asciidoctor.Factory.create();
         this.options = Options.builder()
@@ -119,8 +126,11 @@ public class AsciidocConverter {
         // Inline Antora partial$ includes: read each partial file, pre-process its
         // jsonpath$/jsonpathcount$ includes, and inline the content. This ensures
         // attribute definitions (like :propertycount:) appear before references ({propertycount}).
+        // Loop because partials can include other partials (depth-limited to avoid include cycles).
         if (partialsDir != null && Files.isDirectory(partialsDir)) {
-            content = inlinePartials(content, partialsDir, examplesDir);
+            for (int depth = 0; depth < 3 && content.contains("include::partial$"); depth++) {
+                content = inlinePartials(content, partialsDir, examplesDir);
+            }
         }
 
         // Also pre-resolve any jsonpath includes in the top-level document
@@ -190,8 +200,11 @@ public class AsciidocConverter {
                     }
                     replacement = partialContent;
                 } catch (IOException e) {
-                    // Skip silently
+                    LOG.warn("Failed to inline partial {} — content will be missing from the indexed doc: {}",
+                            partialPath, e.getMessage());
                 }
+            } else {
+                LOG.warn("Partial not found: {} — content will be missing from the indexed doc", partialPath);
             }
 
             m.appendReplacement(sb, Matcher.quoteReplacement(replacement));
@@ -240,7 +253,8 @@ public class AsciidocConverter {
                     collectedAttrs.putAll(localAttrs);
                 }
             } catch (Exception e) {
-                // Skip silently
+                LOG.warn("Failed to resolve jsonpath include '{}' — option data will be missing: {}",
+                        m.group(2), e.getMessage());
             }
 
             m.appendReplacement(sb, Matcher.quoteReplacement(replacement.toString()));

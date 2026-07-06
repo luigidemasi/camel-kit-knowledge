@@ -1,0 +1,37 @@
+# Graded relevance judgments. Columns: queryId <TAB> chunk-id substring <TAB> grade (1=relevant, 2=primary)
+# Keys are substrings of deterministic chunk IDs (apache-camel-{version}-{docType}-{shortName}-{slug}),
+# so they survive reindexing. Verified against the shipped index via RetrievalQualityTest#dumpCorpus.
+# A single key like "-eip-aggregate" matches both the EIP doc page and the catalog-eip chunk.
+comp-kafka	-component-kafka-component-	2
+comp-kafka	-catalog-component-kafka	1
+comp-amqp	-component-amqp-component-	2
+comp-amqp	-catalog-component-amqp	1
+comp-file	-component-file-component-	2
+comp-http	-component-http-component-	2
+comp-http	-catalog-component-http	1
+comp-sql	-component-sql-component-	2
+comp-sql	-catalog-component-sql	1
+comp-activemq	-component-activemq-component-	2
+comp-activemq	-catalog-component-activemq	1
+comp-platform-http	-component-platform-http-component-	2
+comp-platform-http	-catalog-component-platform-http	1
+comp-azure-sb	-component-azure-servicebus-component-	2
+comp-azure-sb	-catalog-component-azure-servicebus	1
+eip-aggregate	-eip-aggregate	2
+eip-split	-eip-split	2
+eip-choice	-eip-choice	2
+eip-dlc	-eip-dead-letter-channel	2
+eip-throttle	-eip-throttle	2
+cve-29891	-cve-cve-2025-29891	2
+cve-bean-injection	-cve-cve-2025-27636	2
+cve-bean-injection	-cve-cve-2025-29891	1
+rel-4140	-release-notes-release-4.14.0	2
+rel-4180	-release-notes-release-4.18.0	2
+mig-removed	-user-manual-camel-4-migration-guide	2
+mig-removed	-user-manual-camel-4x-upgrade-guide	1
+mig-removed	-user-manual-camel-3x-upgrade-guide	1
+mig-removed	-camel-migration-	1
+mig-junit	-user-manual-camel-4-migration-guide	2
+mig-junit	-user-manual-camel-3x-upgrade-guide	2
+mig-junit	-camel-migration-	1
+um-report-plugin	-user-manual-camel-report-maven-plugin-	2

@@ -49,8 +49,18 @@ public class IndexBuilder {
     public int build(Path indexPath, List<DocumentDomain> domains) throws IOException, InterruptedException {
         int totalDocs = 0;
 
+        // CREATE (not the default CREATE_OR_APPEND): rebuilding into an existing directory must
+        // replace the index, not silently append duplicate documents
+        IndexWriterConfig config = new IndexWriterConfig(new StandardAnalyzer());
+        config.setOpenMode(IndexWriterConfig.OpenMode.CREATE);
+
         try (Directory dir = FSDirectory.open(indexPath);
-             IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(new StandardAnalyzer()))) {
+             IndexWriter writer = new IndexWriter(dir, config)) {
+
+            // Stamp the embedding model so the MCP server can detect incompatible query-time models
+            if (embeddingProvider != null) {
+                writer.addDocument(KnowledgeDocument.indexMeta(embeddingProvider.modelId()));
+            }
 
             for (DocumentDomain domain : domains) {
                 DomainMetadata meta = domain.metadata();
