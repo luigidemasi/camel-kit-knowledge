@@ -72,6 +72,35 @@ class SectionChunkerTest {
     }
 
     @Test
+    void oversizedSingleParagraphIsHardSplit() {
+        // One giant code block: no blank lines, so no paragraph boundaries to split at
+        StringBuilder md = new StringBuilder("## Giant Table\n\n");
+        for (int i = 0; i < 400; i++) {
+            md.append("| option-").append(i).append(" | ").append("x".repeat(60)).append(" |\n");
+        }
+
+        List<Section> sections = chunker.chunk(md.toString());
+
+        assertTrue(sections.size() > 1, "Oversized single paragraph must be hard-split");
+        for (Section s : sections) {
+            assertTrue(s.content().length() <= SectionChunker.MAX_CHUNK_CHARS,
+                    "Every part must fit the cap, got " + s.content().length());
+        }
+    }
+
+    @Test
+    void pathologicalSingleLineIsSliced() {
+        String md = "## Blob\n\n" + "y".repeat(3 * SectionChunker.MAX_CHUNK_CHARS);
+
+        List<Section> sections = chunker.chunk(md);
+
+        assertTrue(sections.size() >= 3);
+        for (Section s : sections) {
+            assertTrue(s.content().length() <= SectionChunker.MAX_CHUNK_CHARS);
+        }
+    }
+
+    @Test
     void oversizedSectionsAreSplitAtParagraphs() {
         StringBuilder md = new StringBuilder("## Big Section\n\n");
         for (int i = 0; i < 40; i++) {

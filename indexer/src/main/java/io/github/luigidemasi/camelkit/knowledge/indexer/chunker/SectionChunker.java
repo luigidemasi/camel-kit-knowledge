@@ -107,6 +107,13 @@ public class SectionChunker {
                 parts.add(part.toString().trim());
                 part.setLength(0);
             }
+            if (paragraph.length() > MAX_CHUNK_CHARS) {
+                // Single oversized paragraph (giant code block or table with no blank lines) —
+                // the flush above only helps when the buffer is non-empty, so hard-split it.
+                // `part` is guaranteed empty here: either it was just flushed, or it already was.
+                parts.addAll(hardSplit(paragraph));
+                continue;
+            }
             part.append(paragraph).append("\n\n");
         }
         if (part.length() > 0) {
@@ -117,5 +124,31 @@ public class SectionChunker {
             String partTitle = parts.size() > 1 ? title + " (part " + (i + 1) + ")" : title;
             sections.add(new Section(partTitle, parts.get(i), level));
         }
+    }
+
+    /** Splits an oversized paragraph at line boundaries; pathological single lines are sliced raw. */
+    private static List<String> hardSplit(String paragraph) {
+        List<String> slices = new ArrayList<>();
+        StringBuilder slice = new StringBuilder();
+        for (String line : paragraph.split("\n", -1)) {
+            while (line.length() > MAX_CHUNK_CHARS) {
+                if (slice.length() > 0) {
+                    slices.add(slice.toString().trim());
+                    slice.setLength(0);
+                }
+                slices.add(line.substring(0, MAX_CHUNK_CHARS));
+                line = line.substring(MAX_CHUNK_CHARS);
+            }
+            if (slice.length() > 0 && slice.length() + line.length() + 1 > MAX_CHUNK_CHARS) {
+                slices.add(slice.toString().trim());
+                slice.setLength(0);
+            }
+            slice.append(line).append('\n');
+        }
+        String last = slice.toString().trim();
+        if (!last.isEmpty()) {
+            slices.add(last);
+        }
+        return slices;
     }
 }

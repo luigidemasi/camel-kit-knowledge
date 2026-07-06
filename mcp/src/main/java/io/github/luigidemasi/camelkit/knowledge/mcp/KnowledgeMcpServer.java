@@ -40,25 +40,27 @@ public class KnowledgeMcpServer {
                         "'fuzzy' means the component name was NOT found verbatim and results are nearest matches only.")
     public String camel_docs_component_info(
             @ToolArg(description = "Component name, e.g., 'kafka', 'http', 'amqp'") String component,
-            @ToolArg(description = "Camel version, e.g., '4.14'. Optional — omit for all versions.",
+            @ToolArg(description = "Camel version (major.minor, e.g., '4.14'). Optional — omit for all versions.",
                      required = false) String version,
             @ToolArg(description = "Runtime filter: 'quarkus' or 'spring-boot'. Optional.",
                      required = false) String runtime) {
         try {
             String normalizedRuntime = normalizeRuntime(runtime);
+            // Index versions are major.minor — '4.14.1' would silently zero out the exact term filter
+            String normalizedVersion = normalizeMinor(version);
 
             List<LuceneSearchService.SearchResult> results
-                    = searchService.lookupComponent(DOMAIN, component, version, normalizedRuntime);
+                    = searchService.lookupComponent(DOMAIN, component, normalizedVersion, normalizedRuntime);
 
             if (results.isEmpty() && normalizedRuntime != null) {
-                results = searchService.lookupComponent(DOMAIN, component, version, null);
+                results = searchService.lookupComponent(DOMAIN, component, normalizedVersion, null);
             }
 
             String match = "exact";
             if (results.isEmpty()) {
                 match = "fuzzy";
                 String query = "camel-" + component + " component";
-                results = searchService.search(DOMAIN, query, version, null, 5);
+                results = searchService.search(DOMAIN, query, normalizedVersion, null, 5);
             }
 
             if (results.isEmpty()) {
