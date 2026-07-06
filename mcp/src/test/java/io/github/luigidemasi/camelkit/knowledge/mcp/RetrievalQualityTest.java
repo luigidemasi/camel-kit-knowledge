@@ -42,9 +42,9 @@ class RetrievalQualityTest {
 
     /**
      * Regression floors for the production search path, ~20% below measured so real regressions fail while index
-     * refreshes don't cause flakiness. Measured 2026-07-06 over 20 queries (BM25 + reranker; vector leg disabled by
-     * the embedding-model guard against the current index artifact): nDCG@10=0.541, MRR@10=0.612, R@10=0.529. Update
-     * after intentional quality changes — expect a jump once the index is rebuilt with compatible embeddings.
+     * refreshes don't cause flakiness. Measured 2026-07-06 over 20 queries (BM25 + reranker; vector leg disabled by the
+     * embedding-model guard against the current index artifact): nDCG@10=0.541, MRR@10=0.612, R@10=0.529. Update after
+     * intentional quality changes — expect a jump once the index is rebuilt with compatible embeddings.
      */
     private static final double MIN_NDCG_AT_10 = 0.42;
     private static final double MIN_MRR_AT_10 = 0.47;
