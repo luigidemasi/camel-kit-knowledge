@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   type, embedding model, and the active search mode, so clients can detect stale coverage.
 - **GitHub Releases index distribution** — the knowledge index is published as a release asset
   (`knowledge-index.zip` + sha256-carrying `index.json` manifest) by the new `Index Release`
-  workflow (weekly cron + manual dispatch). The MCP server resolves the stable
+  workflow (manually dispatched, cut together with version releases). The MCP server resolves the stable
   `releases/latest/download/` manifest URL, downloads/verifies/atomically swaps new versions into
   `~/.camel-kit/knowledge-index/`, opens the index in place (no per-startup extraction), and falls
   back to the cached version offline. `knowledge.index.path` serves a local directory directly
