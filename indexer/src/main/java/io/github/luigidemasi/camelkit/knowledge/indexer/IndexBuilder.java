@@ -28,6 +28,7 @@ public class IndexBuilder {
     private static final Logger LOG = LoggerFactory.getLogger(IndexBuilder.class);
 
     private final EmbeddingProvider embeddingProvider;
+    private final EmbeddingCache embeddingCache;
 
     /** Creates an IndexBuilder without embedding support. */
     public IndexBuilder() {
@@ -36,7 +37,13 @@ public class IndexBuilder {
 
     /** Creates an IndexBuilder with optional embedding support. */
     public IndexBuilder(EmbeddingProvider embeddingProvider) {
+        this(embeddingProvider, null);
+    }
+
+    /** Creates an IndexBuilder with embedding support and an optional embedding cache. */
+    public IndexBuilder(EmbeddingProvider embeddingProvider, EmbeddingCache embeddingCache) {
         this.embeddingProvider = embeddingProvider;
+        this.embeddingCache = embeddingCache;
     }
 
     /**
@@ -70,6 +77,7 @@ public class IndexBuilder {
                 LOG.info("{}: {} chunks ready, indexing...", meta.domainId(), chunks.size());
 
                 int embeddedCount = 0;
+                int cacheHits = 0;
                 int chunkCount = 0;
                 int totalChunks = chunks.size();
                 long startTime = System.currentTimeMillis();
@@ -126,10 +134,19 @@ public class IndexBuilder {
                         }
                     }
 
-                    // Generate embedding if provider is available
+                    // Generate embedding if provider is available (cache first — re-embedding the
+                    // whole corpus takes hours; incremental rebuilds only embed changed chunks)
                     if (embeddingProvider != null) {
                         String textToEmbed = chunk.sectionTitle() + " " + chunk.content();
-                        float[] vector = embeddingProvider.embed(textToEmbed);
+                        float[] vector = embeddingCache != null ? embeddingCache.get(textToEmbed) : null;
+                        if (vector != null) {
+                            cacheHits++;
+                        } else {
+                            vector = embeddingProvider.embed(textToEmbed);
+                            if (embeddingCache != null) {
+                                embeddingCache.put(textToEmbed, vector);
+                            }
+                        }
                         doc.embedding(vector);
                         embeddedCount++;
                     }
@@ -150,8 +167,8 @@ public class IndexBuilder {
                     }
                 }
 
-                LOG.info("  Domain '{}': {} chunks indexed, {} embedded",
-                        meta.domainId(), chunks.size(), embeddedCount);
+                LOG.info("  Domain '{}': {} chunks indexed, {} embedded ({} from cache)",
+                        meta.domainId(), chunks.size(), embeddedCount, cacheHits);
             }
 
             writer.commit();

@@ -53,20 +53,20 @@ public class LuceneSearchService {
     private static final float MIN_RERANK_SCORE = 0.02f;
 
     @Inject
-    IndexResolver indexResolver;
+    IndexDownloader indexDownloader;
 
     private IndexReader reader;
     private IndexSearcher searcher;
     private EmbeddingProvider embeddingProvider;
     private OnnxReranker reranker;
-    private Path indexTempDir;
+    private IndexDownloader.ResolvedIndex resolvedIndex;
     private final StandardAnalyzer analyzer = new StandardAnalyzer();
 
     @PostConstruct
     void init() {
         try {
-            indexTempDir = resolveIndex();
-            reader = DirectoryReader.open(FSDirectory.open(indexTempDir));
+            resolvedIndex = resolveIndex();
+            reader = DirectoryReader.open(FSDirectory.open(resolvedIndex.dir()));
             searcher = new IndexSearcher(reader);
         } catch (Exception e) {
             throw new RuntimeException("Failed to open knowledge index", e);
@@ -94,6 +94,15 @@ public class LuceneSearchService {
             }
         }
 
+        // The stamp proves the *intended* model, not that the vectors are sound: a build with stale
+        // model/tokenizer files on its classpath stamps correctly but stores corrupt vectors. Re-embed a
+        // few stored chunks and require the stored vector to match — else the vector leg serves noise.
+        if (embeddingProvider != null && !verifyStoredVectors()) {
+            LOG.warn("Index vectors do not match runtime embeddings of their own text — "
+                     + "disabling vector search (BM25 + reranker only). Rebuild the index in a clean environment.");
+            embeddingProvider = null;
+        }
+
         // Initialize cross-encoder reranker (graceful degradation if model not available)
         try {
             reranker = new OnnxReranker();
@@ -101,6 +110,56 @@ public class LuceneSearchService {
         } catch (Exception e) {
             LOG.warn("ONNX reranker model not available, returning hybrid-search order");
             reranker = null;
+        }
+    }
+
+    /**
+     * Samples stored vectors and re-embeds their own text with the runtime model; healthy indexes score ~1.0 same-text
+     * cosine (small quantization jitter aside). Returns false when the mean collapses, which happened in practice when
+     * an index build picked up stale model files (same-text cosine ~0.6, retrieval pure noise).
+     */
+    private boolean verifyStoredVectors() {
+        final int samples = 5;
+        final double minMeanCosine = 0.95;
+        try {
+            double sum = 0;
+            int n = 0;
+            for (org.apache.lucene.index.LeafReaderContext leaf : reader.leaves()) {
+                org.apache.lucene.index.FloatVectorValues values
+                        = leaf.reader().getFloatVectorValues(KnowledgeFields.EMBEDDING);
+                if (values == null) {
+                    continue;
+                }
+                while (n < samples && values.nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
+                    Document doc = leaf.reader().document(values.docID());
+                    String content = doc.get(KnowledgeFields.CONTENT);
+                    if (content == null) {
+                        continue;
+                    }
+                    String title = doc.get(KnowledgeFields.SECTION_TITLE);
+                    float[] fresh = embeddingProvider.embed((title != null ? title : "") + " " + content);
+                    float[] stored = values.vectorValue();
+                    double dot = 0;
+                    for (int i = 0; i < Math.min(stored.length, fresh.length); i++) {
+                        dot += stored[i] * fresh[i]; // both L2-normalized
+                    }
+                    sum += dot;
+                    n++;
+                }
+                if (n >= samples) {
+                    break;
+                }
+            }
+            if (n == 0) {
+                return false; // no vectors at all — nothing for the vector leg to search
+            }
+            double mean = sum / n;
+            LOG.info("Embedding self-check: mean same-text cosine {} over {} sampled chunks",
+                    String.format(java.util.Locale.ROOT, "%.4f", mean), n);
+            return mean >= minMeanCosine;
+        } catch (IOException e) {
+            LOG.warn("Embedding self-check failed ({}); keeping vector search enabled", e.getMessage());
+            return true;
         }
     }
 
@@ -136,8 +195,10 @@ public class LuceneSearchService {
         } catch (IOException e) {
             // ignore
         }
-        if (indexTempDir != null) {
-            deleteRecursively(indexTempDir);
+        // Cached/local index dirs are persistent and reused across starts;
+        // only classpath-extracted temp dirs are cleaned up
+        if (resolvedIndex != null && resolvedIndex.temporary()) {
+            deleteRecursively(resolvedIndex.dir());
         }
     }
 
@@ -559,27 +620,21 @@ public class LuceneSearchService {
     }
 
     /**
-     * Resolve the knowledge index. Tries IndexResolver first (Maven artifact download), falls back to classpath
-     * extraction for backward compatibility.
+     * Resolve the knowledge index: local path / manifest-driven download into the persistent cache (see
+     * {@link IndexDownloader}), with classpath extraction as the legacy fallback for uber-jars bundling the index.
      */
-    private Path resolveIndex() throws IOException {
-        // Try IndexResolver (downloads from Maven repo)
+    private IndexDownloader.ResolvedIndex resolveIndex() throws IOException {
         try {
-            Path resolved = indexResolver.resolve();
-            LOG.info("LuceneSearchService: IndexResolver succeeded, path = {}", resolved);
-            String[] files = resolved.toFile().list();
-            LOG.info("LuceneSearchService: extracted {} files", files != null ? files.length : 0);
-            return resolved;
-        } catch (IndexResolver.IndexResolverException e) {
-            LOG.warn("IndexResolver failed ({}), falling back to classpath extraction", e.getMessage());
+            return indexDownloader.resolve();
+        } catch (IOException e) {
+            LOG.warn("Index resolution failed ({}), falling back to classpath extraction", e.getMessage());
         }
 
-        // Fallback: extract from classpath (legacy — index bundled in uber-jar)
         Path classpath = extractIndexFromClasspath();
         String[] files = classpath.toFile().list();
         LOG.info("LuceneSearchService: classpath fallback, path = {}, files = {}",
                 classpath, files != null ? files.length : 0);
-        return classpath;
+        return new IndexDownloader.ResolvedIndex(classpath, true);
     }
 
     private Path extractIndexFromClasspath() throws IOException {

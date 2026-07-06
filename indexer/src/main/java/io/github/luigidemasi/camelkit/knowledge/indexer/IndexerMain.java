@@ -3,13 +3,22 @@ package io.github.luigidemasi.camelkit.knowledge.indexer;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.TreeSet;
 
 import io.github.luigidemasi.camelkit.knowledge.embedding.OnnxEmbeddingProvider;
 import io.github.luigidemasi.camelkit.knowledge.indexer.domain.ApacheCamelDomain;
 import io.github.luigidemasi.camelkit.knowledge.indexer.domain.DocumentDomain;
+import io.github.luigidemasi.camelkit.knowledge.schema.KnowledgeFields;
 
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.MultiTerms;
+import org.apache.lucene.index.Terms;
+import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.store.FSDirectory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -57,7 +66,9 @@ public class IndexerMain {
 
         LOG.info("Loading embedding model...");
         OnnxEmbeddingProvider embeddingProvider = new OnnxEmbeddingProvider();
-        IndexBuilder builder = new IndexBuilder(embeddingProvider);
+        EmbeddingCache embeddingCache = new EmbeddingCache(
+                resourcesDir.resolve("apache-camel/embedding-cache"), embeddingProvider.modelId());
+        IndexBuilder builder = new IndexBuilder(embeddingProvider, embeddingCache);
         int total = builder.build(outputDir, domains);
 
         // Write index file manifest for MCP server classpath extraction
@@ -72,8 +83,44 @@ public class IndexerMain {
             Files.write(manifestPath, fileNames);
         }
 
+        // Manifest skeleton for index distribution — the release workflow adds version/sha256/size
+        writeManifestSkeleton(outputDir, embeddingProvider.modelId(), total);
+
         LOG.info("Index built successfully: {} documents in {} domains",
                 total, domains.size());
+    }
+
+    /**
+     * Writes {@code index.json} next to the index with the fields only the build knows (embedding model, doc count,
+     * covered versions, build time). The release workflow enriches it with version, sha256, size, and asset name.
+     */
+    private static void writeManifestSkeleton(Path outputDir, String embeddingModel, int docCount)
+            throws IOException {
+        TreeSet<String> versions = new TreeSet<>();
+        try (DirectoryReader reader = DirectoryReader.open(FSDirectory.open(outputDir))) {
+            Terms terms = MultiTerms.getTerms(reader, KnowledgeFields.SOURCE_VERSION);
+            if (terms != null) {
+                TermsEnum te = terms.iterator();
+                while (te.next() != null) {
+                    versions.add(te.term().utf8ToString());
+                }
+            }
+        }
+
+        StringBuilder versionArray = new StringBuilder();
+        for (String v : versions) {
+            if (versionArray.length() > 0) {
+                versionArray.append(',');
+            }
+            versionArray.append('"').append(v).append('"');
+        }
+
+        String json = String.format(Locale.ROOT,
+                "{%n  \"embeddingModel\": \"%s\",%n  \"docCount\": %d,%n  \"camelVersions\": [%s],%n"
+                                                 + "  \"builtAt\": \"%s\"%n}%n",
+                embeddingModel, docCount, versionArray, Instant.now());
+        Files.writeString(outputDir.getParent().resolve("index.json"), json);
+        LOG.info("Manifest skeleton written: {}", outputDir.getParent().resolve("index.json"));
     }
 
     private static Path resolvePath(String sysProp, String argValue, String defaultValue) {

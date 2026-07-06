@@ -42,13 +42,15 @@ class RetrievalQualityTest {
 
     /**
      * Regression floors for the production search path, ~20% below measured so real regressions fail while index
-     * refreshes don't cause flakiness. Measured 2026-07-06 over 20 queries (BM25 + reranker; vector leg disabled by the
-     * embedding-model guard against the current index artifact): nDCG@10=0.541, MRR@10=0.612, R@10=0.529. Update after
-     * intentional quality changes — expect a jump once the index is rebuilt with compatible embeddings.
+     * refreshes don't cause flakiness. Tests evaluate the committed in-repo index (knowledge.index.path in test
+     * application.properties). Baselines measured 2026-07-06 over 20 queries, both BM25 + reranker (the guards disable
+     * the vector leg on both known indexes): legacy committed index 0.541/0.612/0.529; a clean community rebuild scored
+     * 0.624/0.680/0.708. Floors cover the lower baseline — raise them once the CI-built release index (sound vectors,
+     * gated by -Deval.requireVectors) becomes the committed baseline.
      */
-    private static final double MIN_NDCG_AT_10 = 0.42;
-    private static final double MIN_MRR_AT_10 = 0.47;
-    private static final double MIN_RECALL_AT_10 = 0.40;
+    private static final double MIN_NDCG_AT_10 = 0.43;
+    private static final double MIN_MRR_AT_10 = 0.49;
+    private static final double MIN_RECALL_AT_10 = 0.42;
 
     @Inject
     LuceneSearchService searchService;
@@ -70,6 +72,14 @@ class RetrievalQualityTest {
      */
     @Test
     void productionSearchQuality() throws Exception {
+        // CI release gate: a freshly built index must serve WORKING vectors, not degrade gracefully.
+        // Production tolerates a disabled vector leg; a release with one must not ship.
+        if (Boolean.getBoolean("eval.requireVectors")) {
+            assertTrue(searchService.getEmbeddingProvider() != null,
+                    "Vector search is disabled (model mismatch or failed embedding self-check) — "
+                                                                     + "the index under evaluation must not be released");
+        }
+
         EvalDataset dataset = EvalDataset.load();
 
         Map<String, List<double[]>> byType = new TreeMap<>(); // type -> [ndcg, mrr, recall] per query
