@@ -4,28 +4,24 @@ import java.util.Optional;
 
 import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithDefault;
-import io.smallrye.config.WithName;
 
 /**
- * Configuration for knowledge index artifact resolution. The MCP server resolves the index JAR from Maven repositories
- * at startup.
+ * Configuration for knowledge index resolution. The index is distributed as a GitHub Release asset described by a small
+ * JSON manifest; the MCP server downloads it once into a local cache and opens it in place.
+ *
+ * Resolution order: {@code path} (local dir, no network) → {@code url} manifest + local cache → classpath fallback.
  */
 @ConfigMapping(prefix = "knowledge.index")
 public interface IndexResolverConfig {
 
-    @WithName("group-id")
-    @WithDefault("io.github.luigidemasi")
-    String groupId();
+    /** Direct path to a Lucene index directory — used as-is, no download. Intended for dev, tests, air-gapped use. */
+    Optional<String> path();
 
-    @WithName("artifact-id")
-    @WithDefault("camel-kit-knowledge-index")
-    String artifactId();
+    /** Manifest URL (https:// or file://). Defaults to the latest GitHub release of camel-kit-knowledge. */
+    @WithDefault("https://github.com/luigidemasi/camel-kit-knowledge/releases/latest/download/index.json")
+    String url();
 
-    /** Pin to a specific version. If empty, resolves latest from maven-metadata.xml. */
-    @WithName("knowledge.mcp.version")
-    Optional<String> version();
-
-    /** Comma-separated list of additional Maven repository URLs. */
-    @WithName("repositories")
-    Optional<String> repositories();
+    /** Local cache directory holding downloaded index versions. */
+    @WithDefault("${user.home}/.camel-kit/knowledge-index")
+    String cacheDir();
 }

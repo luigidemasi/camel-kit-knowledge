@@ -9,7 +9,7 @@ Knowledge layer for [camel-kit](https://github.com/luigidemasi/camel-kit) -- sem
 | **schema** | Shared Lucene field constants and `KnowledgeDocument` builder |
 | **embedding** | ONNX-based embedding provider (Granite Embedding Small English R2, 384-dim, Q8) |
 | **indexer** | Document ingestion pipeline -- Git repos, AsciiDoc conversion, Camel Catalog JARs |
-| **index** | Pre-built Lucene index artifact (independently versioned via `${revision}`) |
+| **index** | Pre-built Lucene index (published as a GitHub Release asset, see Index Distribution) |
 | **mcp** | Quarkus MCP server exposing search tools to AI agents |
 
 ## Prerequisites
@@ -64,7 +64,7 @@ The MCP module downloads the ONNX embedding model from HuggingFace during `gener
 ### Rebuild index from source
 
 ```bash
-mvn clean install -pl index -Prebuild-index -Drevision=$(date +%Y%m%d%H%M) -am
+./mvnw install -pl index -Prebuild-index -am -B
 ```
 
 This will:
@@ -73,9 +73,31 @@ This will:
 3. Download Camel Catalog JARs for structured option data
 4. Parse release notes and CVE advisories
 5. Enrich release notes with Apache JIRA issue details (public, no auth required)
-6. Generate embeddings (384-dim vectors)
-7. Write Lucene index to `index/src/main/resources/knowledge-index/`
-8. Package and install the index JAR with a timestamp version
+6. Generate embeddings (384-dim vectors; cached in `apache-camel/embedding-cache/`, so
+   incremental rebuilds only embed new or changed chunks)
+7. Write the Lucene index to `index/src/main/resources/knowledge-index/` plus an
+   `index.json` manifest skeleton
+
+## Index Distribution
+
+The index is **data, not code** — it is published as a GitHub Release asset, not a Maven artifact.
+The `Index Release` workflow (weekly cron + manual dispatch) rebuilds the index on a clean runner,
+runs the retrieval-quality gate (`RetrievalQualityTest`, with working vectors required), and
+publishes `knowledge-index.zip` + `index.json` to a release tagged `index-YYYY.MM.DD-HHMM`.
+
+At startup the MCP server resolves the index in this order:
+
+1. **`knowledge.index.path`** — a local index directory, used in place (dev, tests, air-gapped)
+2. **`knowledge.index.url`** manifest (default: `https://github.com/luigidemasi/camel-kit-knowledge/releases/latest/download/index.json`)
+   — compared against the local cache in `~/.camel-kit/knowledge-index/`; a new version is
+   downloaded, sha256-verified, unzipped, and atomically swapped in. Offline or unreachable URL
+   falls back to the cached version. The index is opened directly from the cache — no per-startup extraction.
+3. **Classpath** — legacy fallback for uber-jars bundling the index
+
+Two runtime guards protect the vector leg: the index carries an embedding-model stamp
+(`__index_meta__`), and a startup self-check re-embeds a few stored chunks and verifies the
+stored vectors match — on any mismatch, vector search is disabled and search degrades to
+BM25 + reranker with a loud log line.
 
 ## Running the MCP Server
 
@@ -87,16 +109,17 @@ jbang io.github.luigidemasi:camel-kit-knowledge-mcp:0.0.1-SNAPSHOT:runner
 java -jar mcp/target/camel-kit-knowledge-mcp-0.0.1-SNAPSHOT-runner.jar
 ```
 
-The MCP server resolves the index JAR from Maven repositories at startup. To pin a specific index version:
+To pin a specific index or run air-gapped:
 
 ```properties
 # In application.properties or via -D flag
-knowledge.index.version=202603131454
+knowledge.index.url=file:///opt/mirrors/camel-kit/index.json   # pinned/mirrored manifest
+knowledge.index.path=/opt/camel-kit/knowledge-index            # local dir, no download
 ```
 
 ## MCP Tools
 
-5 tools with `camel_docs_*` prefix:
+7 tools with `camel_docs_*` prefix:
 
 | Tool | Description |
 |------|-------------|
@@ -105,6 +128,8 @@ knowledge.index.version=202603131454
 | `camel_docs_cve_search` | CVE search by ID, component, severity, or version |
 | `camel_docs_release_info` | Release notes by version |
 | `camel_docs_jira_lookup` | CAMEL-* JIRA issue details and fix version |
+| `camel_docs_validate_endpoint` | Deterministic endpoint URI validation against the Camel catalog |
+| `camel_docs_index_info` | Index metadata: covered versions, doc counts, embedding model, search mode |
 
 ## Search Architecture
 
@@ -127,9 +152,9 @@ Component lookups (`camel_docs_component_info`) use pure BM25 for exact matching
 
 | Property | Purpose | Default |
 |----------|---------|---------|
-| `knowledge.index.version` | Pin a specific index JAR version | latest SNAPSHOT |
-| `knowledge.index.group-id` | Index artifact group ID | `io.github.luigidemasi` |
-| `knowledge.index.artifact-id` | Index artifact ID | `camel-kit-knowledge-index` |
+| `knowledge.index.path` | Local index directory, used in place (no download) | _(unset)_ |
+| `knowledge.index.url` | Index manifest URL (https:// or file://) | latest GitHub release |
+| `knowledge.index.cache-dir` | Local cache for downloaded index versions | `~/.camel-kit/knowledge-index` |
 
 ### Cache locations (gitignored)
 
@@ -137,6 +162,7 @@ Component lookups (`camel_docs_component_info`) use pure BM25 for exact matching
 |------|----------|
 | `indexer/src/main/resources/apache-camel/repos/` | Cloned Git repositories |
 | `indexer/src/main/resources/apache-camel/catalog-cache/` | Downloaded Camel Catalog JARs |
+| `indexer/src/main/resources/apache-camel/embedding-cache/` | Chunk embeddings keyed by model+text (incremental rebuilds) |
 
 Apache JIRA (CAMEL-* issues) is public and requires no authentication.
 

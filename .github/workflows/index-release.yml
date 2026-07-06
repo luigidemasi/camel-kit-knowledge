@@ -1,0 +1,84 @@
+name: Index Release
+
+# Rebuilds the knowledge index and publishes it as a GitHub Release asset
+# (knowledge-index.zip + index.json manifest). The MCP server resolves the
+# latest release via the stable releases/latest/download URL.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1'   # weekly, Monday 03:00 UTC
+
+permissions:
+  contents: write
+
+jobs:
+  release-index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: 21
+          distribution: 'temurin'
+          cache: maven
+
+      # Repos, JIRA/CVE/catalog caches, and the embedding cache persist across
+      # runs — a warm run only embeds new/changed chunks (minutes, not hours).
+      - name: Restore indexer caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            indexer/src/main/resources/apache-camel/repos
+            indexer/src/main/resources/apache-camel/jira-cache
+            indexer/src/main/resources/apache-camel/cve-cache
+            indexer/src/main/resources/apache-camel/catalog-cache
+            indexer/src/main/resources/apache-camel/embedding-cache
+          key: index-caches-${{ github.run_id }}
+          restore-keys: |
+            index-caches-
+
+      - name: Rebuild knowledge index
+        run: ./mvnw install -pl index -Prebuild-index -am -B -Dformat.skip=true
+        env:
+          MAVEN_OPTS: -Xmx4g
+
+      # Quality gate — the mcp tests evaluate the freshly built index
+      # (knowledge.index.path in test config points at index/src/main/resources/knowledge-index).
+      # eval.requireVectors makes a disabled vector leg (model mismatch / failed
+      # embedding self-check) a hard failure instead of graceful degradation.
+      - name: Retrieval quality gate
+        run: >
+          ./mvnw test -pl mcp -B -Dformat.skip=true
+          -Dtest='RetrievalQualityTest#productionSearchQuality'
+          -Deval.requireVectors=true
+
+      - name: Package index and manifest
+        id: package
+        run: |
+          VERSION=$(date +%Y.%m.%d)
+          TAG="index-$(date +%Y.%m.%d-%H%M)"
+          (cd index/src/main/resources && zip -9 -q -r "$GITHUB_WORKSPACE/knowledge-index.zip" knowledge-index)
+          SHA256=$(sha256sum knowledge-index.zip | cut -d' ' -f1)
+          SIZE=$(stat -c%s knowledge-index.zip)
+          jq --arg v "$VERSION" --arg sha "$SHA256" --argjson size "$SIZE" \
+             '. + {version: $v, sha256: $sha, size: $size, asset: "knowledge-index.zip"}' \
+             index/src/main/resources/index.json > index.json
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          cat index.json
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.package.outputs.tag }}" \
+            knowledge-index.zip index.json \
+            --latest \
+            --title "Knowledge index ${{ steps.package.outputs.version }}" \
+            --notes "$(jq -r '"Docs: \(.docCount) · Model: \(.embeddingModel) · Camel versions: \(.camelVersions | join(", ")) · Built: \(.builtAt)"' index.json)"

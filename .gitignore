@@ -64,3 +64,7 @@ indexer/src/main/resources/apache-camel/asciidoc-cache/
 indexer/src/main/resources/apache-camel/jira-cache/
 indexer/src/main/resources/apache-camel/cve-cache/
 indexer/src/main/resources/apache-camel/catalog-cache/
+indexer/src/main/resources/apache-camel/embedding-cache/
+
+# Index manifest skeleton (enriched and published by the release workflow)
+index/src/main/resources/index.json
