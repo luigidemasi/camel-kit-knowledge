@@ -3,11 +3,12 @@ name: Index Release
 # Rebuilds the knowledge index and publishes it as a GitHub Release asset
 # (knowledge-index.zip + index.json manifest). The MCP server resolves the
 # latest release via the stable releases/latest/download URL.
+#
+# Manual dispatch only: index releases are cut deliberately, together with
+# camel-kit-knowledge version releases — not on a schedule.
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 3 * * 1'   # weekly, Monday 03:00 UTC
 
 permissions:
   contents: write

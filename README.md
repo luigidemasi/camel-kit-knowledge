@@ -81,7 +81,7 @@ This will:
 ## Index Distribution
 
 The index is **data, not code** — it is published as a GitHub Release asset, not a Maven artifact.
-The `Index Release` workflow (weekly cron + manual dispatch) rebuilds the index on a clean runner,
+The `Index Release` workflow (manually dispatched, cut together with version releases) rebuilds the index on a clean runner,
 runs the retrieval-quality gate (`RetrievalQualityTest`, with working vectors required), and
 publishes `knowledge-index.zip` + `index.json` to a release tagged `index-YYYY.MM.DD-HHMM`.
 
