@@ -22,6 +22,10 @@ import org.slf4j.LoggerFactory;
 public class OnnxEmbeddingProvider implements EmbeddingProvider {
 
     private static final Logger LOG = LoggerFactory.getLogger(OnnxEmbeddingProvider.class);
+
+    /** Stable model identifier — safe to read without constructing a provider (the ONNX session loads lazily). */
+    public static final String MODEL_ID = "granite-embedding-small-english-r2-q8";
+
     private static final int DIMENSIONS = 384;
     /**
      * Max tokens embedded per chunk. The model (ModernBERT) supports 8192; default is a latency/quality middle ground.
@@ -91,7 +95,7 @@ public class OnnxEmbeddingProvider implements EmbeddingProvider {
 
     @Override
     public String modelId() {
-        return "granite-embedding-small-english-r2-q8";
+        return MODEL_ID;
     }
 
     private float[] meanPool(float[][] tokenEmbeddings, long[] attentionMask) {

@@ -115,10 +115,9 @@ public class IndexDownloader {
         }
 
         // Informational precheck — the authoritative guard runs on the __index_meta__ stamp at open time
-        String runtimeModel = new OnnxEmbeddingProvider().modelId();
-        if (manifest.embeddingModel() != null && !manifest.embeddingModel().equals(runtimeModel)) {
+        if (manifest.embeddingModel() != null && !manifest.embeddingModel().equals(OnnxEmbeddingProvider.MODEL_ID)) {
             LOG.warn("Manifest embedding model '{}' differs from runtime model '{}' — vector search will be disabled",
-                    manifest.embeddingModel(), runtimeModel);
+                    manifest.embeddingModel(), OnnxEmbeddingProvider.MODEL_ID);
         }
 
         Path versionDir = cacheDir.resolve(manifest.version());
@@ -190,7 +189,13 @@ public class IndexDownloader {
             deleteRecursively(partDir);
             unzip(zipFile, partDir);
             deleteRecursively(versionDir);
-            Files.move(partDir, versionDir, StandardCopyOption.ATOMIC_MOVE);
+            try {
+                Files.move(partDir, versionDir, StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                // Some filesystems can't do atomic dir moves; both dirs share a parent so a
+                // plain move is still near-atomic — better than discarding a verified download
+                Files.move(partDir, versionDir, StandardCopyOption.REPLACE_EXISTING);
+            }
         } finally {
             Files.deleteIfExists(zipFile);
             deleteRecursively(partDir);

@@ -47,4 +47,27 @@ class EmbeddingCacheTest {
 
         assertNull(cache.get("text"));
     }
+
+    @Test
+    void changingMaxLengthInvalidatesEntries() throws Exception {
+        String original = System.getProperty("embedding.maxLength");
+        try {
+            System.setProperty("embedding.maxLength", "512");
+            EmbeddingCache cache512 = new EmbeddingCache(dir, "model-a");
+            cache512.put("text", new float[]{1f, 2f});
+            assertArrayEquals(new float[]{1f, 2f}, cache512.get("text"));
+
+            // A cache built under a different truncation window must not serve the old vectors —
+            // the embedding of the same text differs when the window changes
+            System.setProperty("embedding.maxLength", "2048");
+            EmbeddingCache cache2048 = new EmbeddingCache(dir, "model-a");
+            assertNull(cache2048.get("text"));
+        } finally {
+            if (original != null) {
+                System.setProperty("embedding.maxLength", original);
+            } else {
+                System.clearProperty("embedding.maxLength");
+            }
+        }
+    }
 }

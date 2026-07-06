@@ -26,6 +26,9 @@ class VectorDiagnosticTest {
     @Test
     void inspectVectors() throws Exception {
         Path indexDir = Paths.get("../index/src/main/resources/knowledge-index").toAbsolutePath().normalize();
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+                java.nio.file.Files.isDirectory(indexDir),
+                "In-repo index not found at " + indexDir + " — adjust the path if the layout changed");
         OnnxEmbeddingProvider provider = new OnnxEmbeddingProvider();
 
         try (DirectoryReader reader = DirectoryReader.open(FSDirectory.open(indexDir))) {
