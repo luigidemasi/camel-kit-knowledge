@@ -8,8 +8,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: snapshot-deploy
+  cancel-in-progress: true
+
 jobs:
   deploy:
+    if: github.repository == 'luigidemasi/camel-kit-knowledge' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
