@@ -9,9 +9,13 @@ import java.util.TreeSet;
 
 import jakarta.inject.Inject;
 
+import io.github.luigidemasi.camelkit.knowledge.schema.KnowledgeFields;
+
 import io.quarkus.test.junit.QuarkusTest;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.Term;
+import org.apache.lucene.search.TermQuery;
 import org.jboss.logging.Logger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -43,14 +47,12 @@ class RetrievalQualityTest {
     /**
      * Regression floors for the production search path, ~20% below measured so real regressions fail while index
      * refreshes don't cause flakiness. Tests evaluate the committed in-repo index (knowledge.index.path in test
-     * application.properties). Baselines measured 2026-07-06 over 20 queries, both BM25 + reranker (the guards disable
-     * the vector leg on both known indexes): legacy committed index 0.541/0.612/0.529; a clean community rebuild scored
-     * 0.624/0.680/0.708. Floors cover the lower baseline — raise them once the CI-built release index (sound vectors,
-     * gated by -Deval.requireVectors) becomes the committed baseline.
+     * application.properties). The sound-vector baseline measured 2026-09-04 over 20 queries scored 0.671/0.692/0.842;
+     * the floors leave approximately 20% headroom for index refreshes.
      */
-    private static final double MIN_NDCG_AT_10 = 0.43;
-    private static final double MIN_MRR_AT_10 = 0.49;
-    private static final double MIN_RECALL_AT_10 = 0.42;
+    private static final double MIN_NDCG_AT_10 = 0.53;
+    private static final double MIN_MRR_AT_10 = 0.55;
+    private static final double MIN_RECALL_AT_10 = 0.67;
 
     @Inject
     LuceneSearchService searchService;
@@ -72,6 +74,18 @@ class RetrievalQualityTest {
      */
     @Test
     void productionSearchQuality() throws Exception {
+        List<String> versions = searchService.indexInfo().versions();
+        assertTrue(versions.contains("4.22"), "Production index must cover Camel 4.22; got " + versions);
+        assertTrue(versions.contains("4.18"), "Production index must cover Camel 4.18 LTS; got " + versions);
+        assertTrue(versions.contains("4.21"), "Production index must retain Camel 4.21 history; got " + versions);
+        for (String version : List.of("4.18", "4.21", "4.22")) {
+            String expectedId = "apache-camel-" + version + "-catalog-component-timer";
+            int matches = searchService.getSearcher().count(new TermQuery(new Term(KnowledgeFields.ID, expectedId)));
+            assertTrue(matches == 1,
+                    "Production index must include exactly one Timer catalog for Camel " + version + "; got "
+                                     + matches);
+        }
+
         // CI release gate: a freshly built index must serve WORKING vectors, not degrade gracefully.
         // Production tolerates a disabled vector leg; a release with one must not ship.
         if (Boolean.getBoolean("eval.requireVectors")) {

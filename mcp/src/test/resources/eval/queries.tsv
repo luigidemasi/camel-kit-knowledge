@@ -17,7 +17,7 @@ eip-dlc	eip	retry failed messages and move them to a dead letter queue
 eip-throttle	eip	throttle the number of messages sent to an endpoint
 cve-29891	cve	CVE-2025-29891 details and fixed versions
 cve-bean-injection	cve	Camel message header injection vulnerability affecting camel-bean
-rel-4140	release	what changed in the Camel 4.14.0 release
+rel-4220	release	what changed in the Camel 4.22.0 release
 rel-4180	release	Camel 4.18 release new features
 mig-removed	migration	removed components when migrating from Camel 3 to Camel 4
 mig-junit	migration	JUnit 4 changes when upgrading to Camel 4

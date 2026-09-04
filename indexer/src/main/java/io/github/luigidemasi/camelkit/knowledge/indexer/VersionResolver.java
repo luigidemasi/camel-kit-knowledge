@@ -154,7 +154,8 @@ public class VersionResolver {
      * Filters releases to active versions:
      * <ul>
      * <li>LTS releases with {@code eol > today}</li>
-     * <li>The single latest non-LTS release (by minor version)</li>
+     * <li>The single latest non-LTS release (by minor version), retained for historical searches even when a newer LTS
+     * exists</li>
      * </ul>
      */
     public static List<CamelRelease> activeVersions(Path websiteRepoDir, LocalDate today)
