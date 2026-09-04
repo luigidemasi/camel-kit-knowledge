@@ -26,8 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   back to the cached version offline. `knowledge.index.path` serves a local directory directly
   (dev, tests, air-gapped).
 - **Embedding cache** — chunk embeddings cached on disk keyed by model + truncation window + text;
-  incremental index rebuilds only embed new or changed chunks (minutes instead of hours), persisted
-  across CI runs.
+  incremental index rebuilds only embed new or changed chunks (minutes instead of hours).
 - **Vector-soundness guards** — the index carries an embedding-model stamp (`__index_meta__`) and
   the MCP server runs a startup self-check that re-embeds sampled chunks; on model mismatch,
   dimension mismatch, or unverifiable vectors the vector leg is disabled (BM25 + reranker) with a

@@ -81,9 +81,11 @@ This will:
 ## Index Distribution
 
 The index is **data, not code** — it is published as a GitHub Release asset, not a Maven artifact.
-The `Index Release` workflow (manually dispatched, cut together with version releases) rebuilds the index on a clean runner,
-runs the retrieval-quality gate (`RetrievalQualityTest`, with working vectors required), and
-publishes `knowledge-index.zip` + `index.json` to a release tagged `index-YYYY.MM.DD-HHMM`.
+Reindexing is performed on a branch; the generated index is committed with a signed commit and reviewed through a PR.
+After that PR is merged, the `Index Release` workflow (manually dispatched from `main`, cut together with version releases)
+builds the reviewed index without regenerating it, runs the retrieval-quality gate (`RetrievalQualityTest`, with working
+vectors required), verifies that the build did not modify the index, and publishes the reviewed `knowledge-index.zip` +
+`index.json` to a release tagged `index-YYYY.MM.DD-HHMMSS`.
 
 At startup the MCP server resolves the index in this order:
 
@@ -103,7 +105,8 @@ BM25 + reranker with a loud log line.
 
 ```bash
 # Via JBang (recommended)
-jbang io.github.luigidemasi:camel-kit-knowledge-mcp:0.0.1-SNAPSHOT:runner
+jbang --repos central_snap=https://central.sonatype.com/repository/maven-snapshots/ \
+  io.github.luigidemasi:camel-kit-knowledge-mcp:0.0.1-SNAPSHOT:runner
 
 # Or directly
 java -jar mcp/target/camel-kit-knowledge-mcp-0.0.1-SNAPSHOT-runner.jar
