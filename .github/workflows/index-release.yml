@@ -1,20 +1,26 @@
 name: Index Release
 
-# Rebuilds the knowledge index, commits it back to main, and publishes it as a
-# GitHub Release asset (knowledge-index.zip + index.json manifest). The MCP
-# server resolves the latest release via the stable releases/latest/download URL.
+# Validates the reviewed knowledge index and publishes it as a GitHub Release
+# asset (knowledge-index.zip + index.json manifest). Reindexing happens on a
+# branch, and the generated index is committed with a signed commit through a
+# reviewed PR before this workflow is dispatched.
 #
-# Manual dispatch only: index releases are cut deliberately, together with
-# camel-kit-knowledge version releases — not on a schedule.
+# Manual dispatch only from main: index releases are cut deliberately, together
+# with camel-kit-knowledge version releases — not on a schedule.
 
 on:
   workflow_dispatch:
+
+concurrency:
+  group: index-release
+  cancel-in-progress: false
 
 permissions:
   contents: write
 
 jobs:
   release-index:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -29,56 +35,28 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
-      # Repos, JIRA/CVE/catalog caches, and the embedding cache persist across
-      # runs — a warm run only embeds new/changed chunks (minutes, not hours).
-      - name: Restore indexer caches
-        uses: actions/cache@v4
-        with:
-          path: |
-            indexer/src/main/resources/apache-camel/repos
-            indexer/src/main/resources/apache-camel/jira-cache
-            indexer/src/main/resources/apache-camel/cve-cache
-            indexer/src/main/resources/apache-camel/catalog-cache
-            indexer/src/main/resources/apache-camel/embedding-cache
-          key: index-caches-${{ github.run_id }}
-          restore-keys: |
-            index-caches-
+      - name: Build reviewed index
+        run: ./mvnw install -pl index -am -B -Dformat.skip=true
 
-      - name: Rebuild knowledge index
-        run: ./mvnw install -pl index -Prebuild-index -am -B -Dformat.skip=true
-        env:
-          MAVEN_OPTS: -Xmx4g
-
-      # Quality gate — the mcp tests evaluate the freshly built index
+      # Quality gate — the mcp tests evaluate the reviewed in-repo index
       # (knowledge.index.path in test config points at index/src/main/resources/knowledge-index).
       # eval.requireVectors makes a disabled vector leg (model mismatch / failed
       # embedding self-check) a hard failure instead of graceful degradation.
       - name: Retrieval quality gate
         run: >
-          ./mvnw test -pl mcp -B -Dformat.skip=true
-          -Dtest='RetrievalQualityTest#productionSearchQuality'
+          ./mvnw test -pl mcp -am -B -Dformat.skip=true
           -Deval.requireVectors=true
 
-      - name: Commit rebuilt index
-        if: github.ref == 'refs/heads/main'
+      - name: Verify reviewed index is unchanged
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index/src/main/resources/knowledge-index
-          git add -f index/src/main/resources/index.json
-          if git diff --cached --quiet; then
-            echo "No index changes to commit"
-          else
-            git commit -m "chore: update knowledge index"
-            git pull --rebase origin main
-            git push origin HEAD:main
-          fi
+          git diff --exit-code -- index/src/main/resources
+          test -z "$(git status --porcelain=v1 --untracked-files=all --ignored -- index/src/main/resources)"
 
       - name: Package index and manifest
         id: package
         run: |
-          VERSION=$(date +%Y.%m.%d)
-          TAG="index-$(date +%Y.%m.%d-%H%M)"
+          VERSION=$(date -u +%Y.%m.%d-%H%M%S)
+          TAG="index-$VERSION"
           (cd index/src/main/resources && zip -9 -q -r "$GITHUB_WORKSPACE/knowledge-index.zip" knowledge-index)
           SHA256=$(sha256sum knowledge-index.zip | cut -d' ' -f1)
           SIZE=$(stat -c%s knowledge-index.zip)
