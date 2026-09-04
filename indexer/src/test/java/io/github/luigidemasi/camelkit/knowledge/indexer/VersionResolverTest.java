@@ -109,10 +109,10 @@ class VersionResolverTest {
                 "Active LTS 4.14 should be included");
     }
 
-    // ── 3. includesLatestNonLts ─────────────────────────────────────────
+    // ── 3. retainsLatestNonLtsWhenNewerLtsExists ────────────────────────
 
     @Test
-    void includesLatestNonLts() throws Exception {
+    void retainsLatestNonLtsWhenNewerLtsExists() throws Exception {
         Path releasesDir = tempDir.resolve("content/releases");
         Files.createDirectories(releasesDir);
 
@@ -121,7 +121,7 @@ class VersionResolverTest {
                 date: 2026-03-01
                 draft: false
                 title: "Camel 4.18.0 (LTS) Release"
-                summary: "Long term support release"
+                summary: "Earlier active long term support release"
                 kind: lts
                 eol: 2027-12-31
                 category: camel
@@ -129,38 +129,45 @@ class VersionResolverTest {
                 Body.
                 """);
 
-        Files.writeString(releasesDir.resolve("release-4.19.0.md"), """
+        Files.writeString(releasesDir.resolve("release-4.22.0.md"), """
                 ---
-                date: 2026-04-01
+                date: 2026-08-11
                 draft: false
-                title: "Camel 4.19.0 Release"
+                title: "Camel 4.22.0 (LTS) Release"
+                summary: "Long term support release"
+                kind: lts
+                eol: 2027-08-10
+                category: camel
+                ---
+                Body.
+                """);
+
+        Files.writeString(releasesDir.resolve("release-4.21.0.md"), """
+                ---
+                date: 2026-07-01
+                draft: false
+                title: "Camel 4.21.0 Release"
                 summary: "Latest non-LTS release"
                 category: camel
                 ---
                 Body.
                 """);
 
-        Files.writeString(releasesDir.resolve("release-4.17.0.md"), """
+        Files.writeString(releasesDir.resolve("release-4.20.0.md"), """
                 ---
-                date: 2026-02-01
+                date: 2026-06-01
                 draft: false
-                title: "Camel 4.17.0 Release"
+                title: "Camel 4.20.0 Release"
                 summary: "Older non-LTS release"
                 category: camel
                 ---
                 Body.
                 """);
 
-        LocalDate today = LocalDate.of(2026, 4, 20);
+        LocalDate today = LocalDate.of(2026, 9, 4);
         List<CamelRelease> active = VersionResolver.activeVersions(tempDir, today);
 
-        // Should include LTS 4.18 and latest non-LTS 4.19, but not older non-LTS 4.17
-        assertTrue(active.stream().anyMatch(r -> r.minor().equals("4.18")),
-                "Active LTS 4.18 should be included");
-        assertTrue(active.stream().anyMatch(r -> r.minor().equals("4.19")),
-                "Latest non-LTS 4.19 should be included");
-        assertTrue(active.stream().noneMatch(r -> r.minor().equals("4.17")),
-                "Older non-LTS 4.17 should be excluded");
+        assertEquals(List.of("4.18", "4.21", "4.22"), active.stream().map(CamelRelease::minor).toList());
     }
 
     // ── 4. ignoresNonCamelReleases ──────────────────────────────────────
@@ -259,9 +266,9 @@ class VersionResolverTest {
                     <modelVersion>4.0.0</modelVersion>
                     <groupId>org.apache.camel.quarkus</groupId>
                     <artifactId>camel-quarkus</artifactId>
-                    <version>3.27.0</version>
+                    <version>3.39.0</version>
                     <properties>
-                        <camel.major.minor>4.14</camel.major.minor>
+                        <camel.major.minor>4.22</camel.major.minor>
                         <camel.version>${camel.major.minor}.0</camel.version>
                     </properties>
                 </project>
@@ -270,8 +277,8 @@ class VersionResolverTest {
         QuarkusMapping mapping = VersionResolver.parseQuarkusPom(pomXml);
 
         assertNotNull(mapping);
-        assertEquals("4.14", mapping.camelMinor());
-        assertEquals("4.14.0", mapping.camelVersion());
+        assertEquals("4.22", mapping.camelMinor());
+        assertEquals("4.22.0", mapping.camelVersion());
     }
 
     // ── 8. parsesCamelVersionWithPatchBump ──────────────────────────────

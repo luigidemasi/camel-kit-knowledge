@@ -25,7 +25,7 @@ eip-throttle	-eip-throttle	2
 cve-29891	-cve-cve-2025-29891	2
 cve-bean-injection	-cve-cve-2025-27636	2
 cve-bean-injection	-cve-cve-2025-29891	1
-rel-4140	-release-notes-release-4.14.0	2
+rel-4220	-release-notes-release-4.22.0	2
 rel-4180	-release-notes-release-4.18.0	2
 mig-removed	-user-manual-camel-4-migration-guide	2
 mig-removed	-user-manual-camel-4x-upgrade-guide	1

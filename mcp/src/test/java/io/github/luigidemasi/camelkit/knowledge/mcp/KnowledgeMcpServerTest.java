@@ -45,22 +45,22 @@ class KnowledgeMcpServerTest {
     @Test
     void camelDocsSearch_withVersionFilter() throws Exception {
         List<LuceneSearchService.SearchResult> results
-                = searchService.search("apache_camel", "getting started", "4.14", null, 5);
+                = searchService.search("apache_camel", "getting started", "4.22", null, 5);
 
-        assertFalse(results.isEmpty(), "Expected results for 'getting started' with version 4.14");
+        assertFalse(results.isEmpty(), "Expected results for 'getting started' with version 4.22");
     }
 
     @Test
     void camelDocsComponentInfoTool_returnsJson() {
-        String json = mcpServer.camel_docs_component_info("kafka", "4.14", null);
+        String json = mcpServer.camel_docs_component_info("kafka", "4.22", null);
 
         assertFalse(json.contains("\"error\""), "Should not return error: " + json);
-        assertTrue(json.contains("\"found\""), "Should contain found field");
+        assertTrue(json.contains("\"found\":true"), "Should find Kafka for Camel 4.22: " + json);
     }
 
     @Test
     void camelDocsComponentInfoTool_withRuntime() {
-        String json = mcpServer.camel_docs_component_info("platform-http", "4.14", "quarkus");
+        String json = mcpServer.camel_docs_component_info("platform-http", "4.22", "quarkus");
 
         assertFalse(json.contains("\"error\""), "Should not return error: " + json);
         assertTrue(json.contains("\"found\":true"), "Should find platform-http for quarkus: " + json);
@@ -68,11 +68,42 @@ class KnowledgeMcpServerTest {
 
     @Test
     void camelDocsSearchTool_returnsJson() {
-        String json = mcpServer.camel_docs_search("release notes", "4.14", 5);
+        String json = mcpServer.camel_docs_search("release notes", "4.22", 5);
 
         assertFalse(json.contains("\"error\""), "Should not return error: " + json);
-        assertTrue(json.contains("\"found\""), "Should contain found field");
+        assertTrue(json.contains("\"found\":true"), "Should find release notes for Camel 4.22: " + json);
         assertTrue(json.contains("\"results\""), "Should contain results array");
+    }
+
+    @Test
+    void camelDocsReleaseInfoTool_returnsCamel422Release() {
+        String json = mcpServer.camel_docs_release_info("4.22.0", 5);
+
+        assertFalse(json.contains("\"error\""), "Should not return error: " + json);
+        assertTrue(json.contains("\"found\":true"), "Should find the Camel 4.22.0 release: " + json);
+        assertTrue(json.contains("\"doc_type\":\"release-notes\""), "Should return release notes: " + json);
+        assertTrue(json.contains("\"source_version\":\"4.22\""), "Should return Camel 4.22 content: " + json);
+    }
+
+    @Test
+    void camelDocsIndexInfoTool_reportsCamel422Corpus() {
+        String json = mcpServer.camel_docs_index_info();
+
+        assertFalse(json.contains("\"error\""), "Should not return error: " + json);
+        assertTrue(json.contains("\"versions\":[\"4.18\",\"4.19\",\"4.20\",\"4.21\",\"4.22\"]"),
+                "Should report the generated Camel version range: " + json);
+        assertTrue(json.contains("\"embedding_model\":\"granite-embedding-small-english-r2-q8\""),
+                "Should report the generated index model: " + json);
+    }
+
+    @Test
+    void camelDocsValidateEndpointTool_usesCamel422Catalog() {
+        String json = mcpServer.camel_docs_validate_endpoint("timer:test?period=1000");
+
+        assertFalse(json.contains("\"error\""), "Should not return error: " + json);
+        assertTrue(json.contains("\"valid\":true"), "Should validate the timer endpoint: " + json);
+        assertTrue(json.contains("\"catalog_version\":\"4.22.0\""),
+                "Should report the Camel 4.22.0 catalog: " + json);
     }
 
     // ── Edge cases ─────────────────────────────────────────────────

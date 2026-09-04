@@ -70,6 +70,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Camel 4.22 coverage** — endpoint validation now uses `camel-catalog` 4.22.0, and index release
+  gates require the 4.22 corpus while retaining the latest non-LTS release for historical searches.
 - **Embedding window raised 512 → 2,048 tokens** (`-Dembedding.maxLength`); requires a full reindex
   to take effect on stored vectors.
 - **Hybrid search defaults** re-validated by the eval harness; the reranker owns final ordering, so
