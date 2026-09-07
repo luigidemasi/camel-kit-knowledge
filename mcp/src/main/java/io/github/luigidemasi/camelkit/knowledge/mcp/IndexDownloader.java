@@ -61,7 +61,7 @@ public class IndexDownloader {
     public record ResolvedIndex(Path dir, boolean temporary) {
     }
 
-    record Manifest(String version, String sha256, String asset, String embeddingModel) {
+    record Manifest(String version, String sha256, String asset, String embeddingModel, String etag) {
     }
 
     @Inject
@@ -91,7 +91,7 @@ public class IndexDownloader {
         URI manifestUri = URI.create(config.url());
         Manifest manifest;
         try {
-            manifest = fetchManifest(manifestUri, cacheDir, haveCached);
+            manifest = fetchManifest(manifestUri, cacheDir, haveCached ? cachedVersion : null);
             if (manifest == null) {
                 // 304 Not Modified — the cached version is current
                 LOG.info("Knowledge index up to date (version {})", cachedVersion);
@@ -110,6 +110,7 @@ public class IndexDownloader {
         }
 
         if (manifest.version().equals(cachedVersion) && haveCached) {
+            saveValidator(cacheDir, manifestUri, manifest);
             LOG.info("Knowledge index up to date (version {})", cachedVersion);
             return new ResolvedIndex(cachedDir, false);
         }
@@ -125,37 +126,37 @@ public class IndexDownloader {
             downloadAndUnpack(manifestUri, manifest, cacheDir, versionDir);
         }
 
-        Files.writeString(marker, manifest.version());
+        writeAtomically(marker, manifest.version());
+        saveValidator(cacheDir, manifestUri, manifest);
         prune(cacheDir, manifest.version(), cachedVersion);
         LOG.info("Knowledge index version {} ready at {}", manifest.version(), versionDir);
         return new ResolvedIndex(versionDir, false);
     }
 
     /** Fetches and parses the manifest. Returns null on HTTP 304 (only sent when an ETag is cached). */
-    private Manifest fetchManifest(URI uri, Path cacheDir, boolean haveCached)
+    private Manifest fetchManifest(URI uri, Path cacheDir, String cachedVersion)
             throws IOException, InterruptedException {
         byte[] body;
+        String etag = null;
         if ("file".equals(uri.getScheme())) {
             body = Files.readAllBytes(Path.of(uri));
         } else {
-            Path etagFile = cacheDir.resolve("etag");
             HttpRequest.Builder request = HttpRequest.newBuilder(uri).timeout(MANIFEST_TIMEOUT).GET();
-            if (haveCached && Files.isRegularFile(etagFile)) {
-                request.header("If-None-Match", Files.readString(etagFile).trim());
+            String cachedEtag = readValidator(cacheDir, uri, cachedVersion);
+            if (cachedEtag != null) {
+                request.header("If-None-Match", cachedEtag);
             }
             HttpResponse<byte[]> response = httpClient.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
             if (response.statusCode() == 304) {
+                if (cachedEtag == null) {
+                    throw new IOException("Manifest returned HTTP 304 without a matching cached validator");
+                }
                 return null;
             }
             if (response.statusCode() != 200) {
                 throw new IOException("Manifest fetch returned HTTP " + response.statusCode());
             }
-            response.headers().firstValue("ETag").ifPresent(etag -> {
-                try {
-                    Files.writeString(etagFile, etag);
-                } catch (IOException ignored) {
-                }
-            });
+            etag = response.headers().firstValue("ETag").orElse(null);
             body = response.body();
         }
 
@@ -168,7 +169,56 @@ public class IndexDownloader {
         return new Manifest(
                 version, sha256,
                 root.path("asset").asText("knowledge-index.zip"),
-                root.path("embeddingModel").asText(null));
+                root.path("embeddingModel").asText(null), etag);
+    }
+
+    private String readValidator(Path cacheDir, URI uri, String cachedVersion) {
+        if (cachedVersion == null) {
+            return null;
+        }
+        try {
+            JsonNode validator = mapper.readTree(Files.readString(cacheDir.resolve("etag")));
+            if (validator != null && uri.toString().equals(validator.path("url").asText())
+                    && cachedVersion.equals(validator.path("version").asText())) {
+                String etag = validator.path("etag").asText(null);
+                return etag != null && !etag.isBlank() ? etag : null;
+            }
+        } catch (IOException e) {
+            // Missing, incomplete or legacy unbound validators require an unconditional check.
+        }
+        return null;
+    }
+
+    private void saveValidator(Path cacheDir, URI uri, Manifest manifest) {
+        try {
+            if (manifest.etag() == null) {
+                Files.deleteIfExists(cacheDir.resolve("etag"));
+            } else {
+                String validator = mapper.createObjectNode()
+                        .put("url", uri.toString())
+                        .put("version", manifest.version())
+                        .put("etag", manifest.etag()).toString();
+                writeAtomically(cacheDir.resolve("etag"), validator);
+            }
+        } catch (IOException e) {
+            LOG.warn("Cannot save index manifest validator: {}", e.getMessage());
+        }
+    }
+
+    private void writeAtomically(Path target, String content) throws IOException {
+        Path pending = Files.createTempFile(target.getParent(), target.getFileName() + "-", ".part");
+        try {
+            Files.writeString(pending, content);
+            moveAtomically(pending, target);
+        } finally {
+            Files.deleteIfExists(pending);
+        }
+    }
+
+    // Kept separate to inject a failed filesystem replacement in recovery tests.
+    void moveAtomically(Path source, Path target) throws IOException {
+        // Never truncate the active marker, including when atomic replacement is unsupported.
+        Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
     }
 
     private void downloadAndUnpack(URI manifestUri, Manifest manifest, Path cacheDir, Path versionDir)
@@ -192,8 +242,7 @@ public class IndexDownloader {
             try {
                 Files.move(partDir, versionDir, StandardCopyOption.ATOMIC_MOVE);
             } catch (java.nio.file.AtomicMoveNotSupportedException e) {
-                // Some filesystems can't do atomic dir moves; both dirs share a parent so a
-                // plain move is still near-atomic — better than discarding a verified download
+                // The version is not active yet; the current marker is replaced only after this move succeeds.
                 Files.move(partDir, versionDir, StandardCopyOption.REPLACE_EXISTING);
             }
         } finally {
