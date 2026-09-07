@@ -87,14 +87,32 @@ builds the reviewed index without regenerating it, runs the retrieval-quality ga
 vectors required), verifies that the build did not modify the index, and publishes the reviewed `knowledge-index.zip` +
 `index.json` to a release tagged `index-YYYY.MM.DD-HHMMSS`.
 
-At startup the MCP server resolves the index in this order:
+On the first knowledge query, the MCP server resolves the index in this order:
 
 1. **`knowledge.index.path`** — a local index directory, used in place (dev, tests, air-gapped)
 2. **`knowledge.index.url`** manifest (default: `https://github.com/luigidemasi/camel-kit-knowledge/releases/latest/download/index.json`)
    — compared against the local cache in `~/.camel-kit/knowledge-index/`; a new version is
-   downloaded, sha256-verified, unzipped, and atomically swapped in. Offline or unreachable URL
-   falls back to the cached version. The index is opened directly from the cache — no per-startup extraction.
+   downloaded, sha256-verified, unzipped, and activated by atomically replacing the `current` marker.
+   Failed manifest checks, downloads, or activation fall back to the previously active cached version.
+   The index is opened directly from the cache — no per-startup extraction.
 3. **Classpath** — legacy fallback for uber-jars bundling the index
+
+The MCP handshake and tool listing do not initialize the index; call `camel_docs_index_info` to check readiness.
+With no usable cache, a failed first installation requires a reachable manifest or `knowledge.index.path`.
+Atomic moves for both version directories and metadata must be supported by the cache filesystem. A later attempt can activate an update
+once the failure clears; retrying alone cannot add missing filesystem support. Atomic moves do not guarantee
+durability across power loss.
+
+Cache updates are serialized across threads and processes, from reading the active version through pruning.
+Each download uses its own staging directory; the next locked attempt cleans up interrupted staging files.
+New metadata files honor the process umask; replacements preserve
+existing POSIX permissions. A reader unable to acquire the update lock can still use a readable active cache.
+The manifest ETag is saved after activation and bound to the manifest URL and version; saving it is best effort.
+An HTTP 200 response without an ETag removes the old validator, and legacy unbound validators trigger a fresh check.
+
+Custom manifest versions must be 1–128 ASCII letters, digits, dots, underscores or hyphens, beginning with a letter
+or digit. Trailing dots, `.part` suffixes, `current`, `etag`, and Windows device names are reserved (case-insensitive).
+Version directories must be real directories inside the cache, not symbolic links.
 
 Two runtime guards protect the vector leg: the index carries an embedding-model stamp
 (`__index_meta__`), and a startup self-check re-embeds a few stored chunks and verifies the

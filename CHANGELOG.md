@@ -45,8 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Index update recovery** — persist manifest ETags only after activation and bind them to the
   installed version and manifest URL, so failed updates and legacy stale validators cannot suppress
   a retry. Replace the active marker atomically; unsupported or failed marker replacement leaves
-  the previous marker intact. Atomic replacement depends on filesystem support and does not
-  guarantee power-loss durability.
+  the previous marker intact and immediately serves the previous cached version when available.
+  Atomic replacement depends on filesystem support and does not guarantee power-loss durability.
+  Metadata honors the process umask and preserves existing POSIX permissions. Concurrent cache
+  updates are serialized across threads and processes and use separate staging directories.
+  Reject unsafe version names and symbolic-link version directories before activation.
 - **CVE search returned zero results for every query** — the searcher required `doc_type:"errata"`
   while the indexer writes `"cve"`; security searches now match both document generations, guarded
   by an end-to-end test.

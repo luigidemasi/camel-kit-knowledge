@@ -6,14 +6,24 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFilePermission;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.Locale;
+import java.util.Set;
+import java.util.UUID;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -50,6 +60,12 @@ public class IndexDownloader {
     private static final Duration MANIFEST_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration ASSET_TIMEOUT = Duration.ofMinutes(5);
 
+    // ponytail: one configured cache per server; serialize JVM callers to avoid overlapping file locks.
+    private static final Object CACHE_MONITOR = new Object();
+    private static final Pattern STAGING_NAME = Pattern.compile(
+            "(?:\\.index|current|etag)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.part"
+                                                                + "|index-[0-9]+\\.zip\\.part");
+
     private final IndexResolverConfig config;
     private final ObjectMapper mapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newBuilder()
@@ -81,12 +97,33 @@ public class IndexDownloader {
         }
 
         // 2. Manifest + local cache
-        Path cacheDir = Path.of(config.cacheDir());
+        Path cacheDir = Path.of(config.cacheDir()).toAbsolutePath().normalize();
         Files.createDirectories(cacheDir);
+        synchronized (CACHE_MONITOR) {
+            // Keep this file: deleting a lock file would let processes lock different inodes.
+            try (FileChannel channel = FileChannel.open(cacheDir.resolve(".update.lock"),
+                    StandardOpenOption.CREATE, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
+                 FileLock lock = channel.lock()) {
+                cleanupStaging(cacheDir);
+                return resolveCached(cacheDir);
+            } catch (IOException e) {
+                // Re-read after lock/update failure; another process may have activated a version.
+                Path cachedDir = cachedDirectory(cacheDir);
+                if (cachedDir != null) {
+                    LOG.warn("Index update failed ({}); using cached version {}", e.getMessage(),
+                            cachedDir.getFileName());
+                    return new ResolvedIndex(cachedDir, false);
+                }
+                throw e;
+            }
+        }
+    }
+
+    private ResolvedIndex resolveCached(Path cacheDir) throws IOException {
         Path marker = cacheDir.resolve("current");
-        String cachedVersion = Files.isRegularFile(marker) ? Files.readString(marker).trim() : null;
-        Path cachedDir = cachedVersion != null && !cachedVersion.isEmpty() ? cacheDir.resolve(cachedVersion) : null;
-        boolean haveCached = cachedDir != null && Files.isDirectory(cachedDir);
+        Path cachedDir = cachedDirectory(cacheDir);
+        String cachedVersion = cachedDir != null ? cachedDir.getFileName().toString() : null;
+        boolean haveCached = cachedDir != null;
 
         URI manifestUri = URI.create(config.url());
         Manifest manifest;
@@ -98,6 +135,9 @@ public class IndexDownloader {
                 return new ResolvedIndex(cachedDir, false);
             }
         } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             if (haveCached) {
                 LOG.warn("Index manifest check failed ({}); using cached version {}", e.getMessage(), cachedVersion);
                 return new ResolvedIndex(cachedDir, false);
@@ -121,16 +161,50 @@ public class IndexDownloader {
                     manifest.embeddingModel(), OnnxEmbeddingProvider.MODEL_ID);
         }
 
-        Path versionDir = cacheDir.resolve(manifest.version());
+        Path versionDir = versionDirectory(cacheDir, manifest.version());
         if (!Files.isDirectory(versionDir)) {
             downloadAndUnpack(manifestUri, manifest, cacheDir, versionDir);
         }
 
         writeAtomically(marker, manifest.version());
         saveValidator(cacheDir, manifestUri, manifest);
+        // Pruning follows activation and the best-effort validator-save attempt.
         prune(cacheDir, manifest.version(), cachedVersion);
         LOG.info("Knowledge index version {} ready at {}", manifest.version(), versionDir);
         return new ResolvedIndex(versionDir, false);
+    }
+
+    private Path cachedDirectory(Path cacheDir) {
+        try {
+            Path marker = cacheDir.resolve("current");
+            if (Files.isRegularFile(marker, LinkOption.NOFOLLOW_LINKS)) {
+                Path dir = versionDirectory(cacheDir, Files.readString(marker).trim());
+                if (Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) {
+                    return dir;
+                }
+            }
+        } catch (IOException e) {
+            LOG.warn("Cannot use cached index marker: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private static void validateVersion(String version) throws IOException {
+        String lower = version.toLowerCase(Locale.ROOT);
+        if (!version.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,127}") || version.endsWith(".")
+                || lower.endsWith(".part") || lower.equals("current") || lower.equals("etag")
+                || lower.matches("(con|prn|aux|nul|com[1-9]|lpt[1-9])(\\..*)?")) {
+            throw new IOException("Index version must be a safe directory name: " + version);
+        }
+    }
+
+    private static Path versionDirectory(Path cacheDir, String version) throws IOException {
+        validateVersion(version);
+        Path dir = cacheDir.resolve(version);
+        if (Files.exists(dir, LinkOption.NOFOLLOW_LINKS) && !Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Index version path is not a real directory: " + dir);
+        }
+        return dir;
     }
 
     /** Fetches and parses the manifest. Returns null on HTTP 304 (only sent when an ETag is cached). */
@@ -166,6 +240,7 @@ public class IndexDownloader {
         if (version == null || sha256 == null) {
             throw new IOException("Manifest is missing required fields (version, sha256)");
         }
+        validateVersion(version);
         return new Manifest(
                 version, sha256,
                 root.path("asset").asText("knowledge-index.zip"),
@@ -184,8 +259,9 @@ public class IndexDownloader {
                 return etag != null && !etag.isBlank() ? etag : null;
             }
         } catch (IOException e) {
-            // Missing, incomplete or legacy unbound validators require an unconditional check.
+            // Missing or malformed JSON is not a usable validator.
         }
+        // Valid JSON scalars (including strong legacy ETags) and mismatched bindings also require a fresh check.
         return null;
     }
 
@@ -206,9 +282,23 @@ public class IndexDownloader {
     }
 
     private void writeAtomically(Path target, String content) throws IOException {
-        Path pending = Files.createTempFile(target.getParent(), target.getFileName() + "-", ".part");
+        Set<PosixFilePermission> permissions = null;
+        if (Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
+            PosixFileAttributeView view = Files.getFileAttributeView(target, PosixFileAttributeView.class,
+                    LinkOption.NOFOLLOW_LINKS);
+            if (view != null) {
+                permissions = view.readAttributes().permissions();
+            }
+        }
+        // A regular new file honors the process umask; createTempFile would restrict POSIX readers to the owner.
+        Path pending
+                = Files.createFile(target.resolveSibling(target.getFileName() + "-" + UUID.randomUUID() + ".part"));
         try {
             Files.writeString(pending, content);
+            // Creation applies umask; preserve explicitly configured permissions on an existing metadata file.
+            if (permissions != null) {
+                Files.setPosixFilePermissions(pending, permissions);
+            }
             moveAtomically(pending, target);
         } finally {
             Files.deleteIfExists(pending);
@@ -217,7 +307,8 @@ public class IndexDownloader {
 
     // Kept separate to inject a failed filesystem replacement in recovery tests.
     void moveAtomically(Path source, Path target) throws IOException {
-        // Never truncate the active marker, including when atomic replacement is unsupported.
+        // Metadata must never disappear or truncate; a version directory must never be installed partially.
+        // Plain moves do not guarantee either invariant, so activation requires atomic filesystem moves.
         Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
     }
 
@@ -227,7 +318,8 @@ public class IndexDownloader {
         LOG.info("Downloading knowledge index {} from {} ...", manifest.version(), assetUri);
 
         Path zipFile = Files.createTempFile(cacheDir, "index-", ".zip.part");
-        Path partDir = cacheDir.resolve(manifest.version() + ".part");
+        Path partDir = cacheDir.resolve(".index-" + UUID.randomUUID() + ".part");
+        boolean partCreated = false;
         try {
             String actualSha = downloadTo(assetUri, zipFile);
             if (!actualSha.equalsIgnoreCase(manifest.sha256())) {
@@ -236,18 +328,15 @@ public class IndexDownloader {
                                       + " but downloaded " + actualSha);
             }
 
-            deleteRecursively(partDir);
+            Files.createDirectory(partDir);
+            partCreated = true;
             unzip(zipFile, partDir);
-            deleteRecursively(versionDir);
-            try {
-                Files.move(partDir, versionDir, StandardCopyOption.ATOMIC_MOVE);
-            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
-                // The version is not active yet; the current marker is replaced only after this move succeeds.
-                Files.move(partDir, versionDir, StandardCopyOption.REPLACE_EXISTING);
-            }
+            moveAtomically(partDir, versionDir);
         } finally {
             Files.deleteIfExists(zipFile);
-            deleteRecursively(partDir);
+            if (partCreated) {
+                deleteRecursively(partDir);
+            }
         }
     }
 
@@ -266,6 +355,9 @@ public class IndexDownloader {
             return HexFormat.of().formatHex(digest.digest());
         } catch (IOException e) {
             throw e;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Index download interrupted from " + uri, e);
         } catch (Exception e) {
             throw new IOException("Index download failed from " + uri, e);
         }
@@ -311,6 +403,16 @@ public class IndexDownloader {
         }
     }
 
+    /** Called only while holding the update lock, so matching staging files belong to interrupted attempts. */
+    private void cleanupStaging(Path cacheDir) {
+        try (var entries = Files.list(cacheDir)) {
+            entries.filter(path -> STAGING_NAME.matcher(path.getFileName().toString()).matches())
+                    .forEach(IndexDownloader::deleteRecursively);
+        } catch (IOException e) {
+            LOG.warn("Cannot clean interrupted index downloads: {}", e.getMessage());
+        }
+    }
+
     /** Keeps the current and previous versions; deletes anything older. */
     private void prune(Path cacheDir, String currentVersion, String previousVersion) {
         try (var entries = Files.list(cacheDir)) {
@@ -327,7 +429,7 @@ public class IndexDownloader {
     }
 
     private static void deleteRecursively(Path dir) {
-        if (!Files.exists(dir)) {
+        if (!Files.exists(dir, LinkOption.NOFOLLOW_LINKS)) {
             return;
         }
         try (var paths = Files.walk(dir)) {
