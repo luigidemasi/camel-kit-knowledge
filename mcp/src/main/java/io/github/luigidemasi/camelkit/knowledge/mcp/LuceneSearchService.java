@@ -33,8 +33,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Embedded Lucene search service that reads the pre-built knowledge index. The index is loaded from classpath resources
- * at startup.
+ * Embedded Lucene search service initialized on the first knowledge query. Resolves the pre-built index through
+ * {@link IndexDownloader}, using an explicit local directory or the manifest-backed cache, with classpath extraction as
+ * a legacy fallback for artifacts that bundle an index.
  */
 @ApplicationScoped
 public class LuceneSearchService {

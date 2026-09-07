@@ -93,20 +93,28 @@ On the first knowledge query, the MCP server resolves the index in this order:
 2. **`knowledge.index.url`** manifest (default: `https://github.com/luigidemasi/camel-kit-knowledge/releases/latest/download/index.json`)
    — compared against the local cache in `~/.camel-kit/knowledge-index/`; a new version is
    downloaded, sha256-verified, unzipped, and activated by atomically replacing the `current` marker.
-   Failed manifest checks, downloads, or activation fall back to the previously active cached version.
+   If a manifest check, download, or activation fails, the server falls back to the previously active cached version.
+   Malformed or unsupported archive URLs follow the same fallback.
    The index is opened directly from the cache — no per-startup extraction.
 3. **Classpath** — legacy fallback for uber-jars bundling the index
 
 The MCP handshake and tool listing do not initialize the index; call `camel_docs_index_info` to check readiness.
 With no usable cache, a failed first installation requires a reachable manifest or `knowledge.index.path`.
-Atomic moves for both version directories and metadata must be supported by the cache filesystem. A later attempt can activate an update
-once the failure clears; retrying alone cannot add missing filesystem support. Atomic moves do not guarantee
-durability across power loss.
+The cache filesystem must support advisory file locks and atomic moves for both version directories and metadata.
+If acquiring the lock or an atomic move fails, a readable active cache remains usable; without one, the download attempt
+fails. A later attempt can activate an update once the failure clears; retrying alone cannot add missing advisory-lock
+or atomic-move support. Atomic moves do not guarantee durability across power loss.
 
 Cache updates are serialized across threads and processes, from reading the active version through pruning.
-Each download uses its own staging directory; the next locked attempt cleans up interrupted staging files.
-New metadata files honor the process umask; replacements preserve
-existing POSIX permissions. A reader unable to acquire the update lock can still use a readable active cache.
+Cache sharing requires all clients to use this locking protocol; older clients without it must use a separate cache.
+When another updater holds the lock, a caller uses a readable active cache immediately. Without a usable cache, lock
+acquisition waits at most five seconds in total across threads and processes before the download attempt fails.
+Each download uses its own staging directory. The next locked attempt cleans up recognized interrupted staging files,
+including legacy `<version>.part` entries only when they are real directories and the version prefix follows the
+safe-name rules below.
+New metadata files honor the process umask; replacements preserve existing POSIX permissions.
+HTTP connections have a three-second timeout. Manifest requests must finish within five seconds and archive requests
+within five minutes, including the response body; a timeout falls back to the readable active cache when available.
 The manifest ETag is saved after activation and bound to the manifest URL and version; saving it is best effort.
 An HTTP 200 response without an ETag removes the old validator, and legacy unbound validators trigger a fresh check.
 
