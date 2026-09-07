@@ -1,21 +1,27 @@
 package io.github.luigidemasi.camelkit.knowledge.mcp;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Unit tests for the manifest-based index resolver, using file:// fixtures — no network.
+ * Unit tests for the manifest-based index resolver, using file and loopback HTTP fixtures.
  */
 class IndexDownloaderTest {
 
@@ -27,7 +33,11 @@ class IndexDownloaderTest {
     private Path localIndexDir;
 
     private IndexDownloader downloader(String path, String url) {
-        IndexResolverConfig config = new IndexResolverConfig() {
+        return new IndexDownloader(config(path, url));
+    }
+
+    private IndexResolverConfig config(String path, String url) {
+        return new IndexResolverConfig() {
             @Override
             public Optional<String> path() {
                 return Optional.ofNullable(path);
@@ -43,7 +53,6 @@ class IndexDownloaderTest {
                 return cacheDir.toString();
             }
         };
-        return new IndexDownloader(config);
     }
 
     /** Publishes a fake index release (zip + manifest) into publishDir; returns the manifest URL. */
@@ -154,5 +163,202 @@ class IndexDownloaderTest {
         assertEquals("new-bytes", Files.readString(resolved.dir().resolve("segments_1")));
         assertTrue(Files.isDirectory(cacheDir.resolve("2026.07.01")), "Previous version is retained");
         assertEquals("2026.07.08", Files.readString(cacheDir.resolve("current")).trim());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void failedHttpUpdateRetriesUnchangedManifest(boolean corruptArchive) throws Exception {
+        publish("v1", "old-bytes", null);
+        try (HttpFixture http = new HttpFixture()) {
+            Path first = downloader(null, http.url()).resolve().dir();
+            assertEquals(first, downloader(null, http.url()).resolve().dir());
+            assertEquals("\"v1\"", http.ifNoneMatch);
+            assertEquals(1, http.notModified.get());
+            assertEquals(1, http.downloads.get(), "HTTP 304 must reuse the installed index");
+            String validator = Files.readString(cacheDir.resolve("etag"));
+
+            publish("v2", "new-bytes", null);
+            http.etag = "\"v2\"";
+            http.assetStatus = corruptArchive ? 200 : 503;
+            http.corruptArchive = corruptArchive;
+            IOException failure = assertThrows(IOException.class, () -> downloader(null, http.url()).resolve());
+            assertTrue(failure.getMessage().contains(corruptArchive ? "sha256 mismatch" : "HTTP 503"));
+            assertEquals("v1", Files.readString(cacheDir.resolve("current")));
+            assertEquals(validator, Files.readString(cacheDir.resolve("etag")));
+            assertEquals("old-bytes", Files.readString(first.resolve("segments_1")));
+            assertFalse(Files.exists(cacheDir.resolve("v2")));
+            assertNoPartialFiles();
+
+            http.assetStatus = 200;
+            http.corruptArchive = false;
+            Path recovered = downloader(null, http.url()).resolve().dir();
+            assertEquals("\"v1\"", http.ifNoneMatch, "Failed v2 must not suppress the recovery download");
+            assertEquals("new-bytes", Files.readString(recovered.resolve("segments_1")));
+            assertEquals("v2", Files.readString(cacheDir.resolve("current")));
+            assertEquals(recovered, downloader(null, http.url()).resolve().dir());
+            assertEquals("\"v2\"", http.ifNoneMatch);
+            assertEquals(2, http.notModified.get());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void failedMarkerReplacementPreservesPreviousCache(boolean atomicMoveUnsupported) throws Exception {
+        publish("v1", "old-bytes", null);
+        try (HttpFixture http = new HttpFixture()) {
+            Path previous = downloader(null, http.url()).resolve().dir();
+            String validator = Files.readString(cacheDir.resolve("etag"));
+            publish("v2", "new-bytes", null);
+            http.etag = "\"v2\"";
+            IndexDownloader failing = new IndexDownloader(config(null, http.url())) {
+                @Override
+                void moveAtomically(Path source, Path target) throws IOException {
+                    if (target.equals(cacheDir.resolve("current"))) {
+                        assertEquals("v1", Files.readString(target));
+                        assertEquals("v2", Files.readString(source));
+                        if (atomicMoveUnsupported) {
+                            throw new AtomicMoveNotSupportedException(source.toString(), target.toString(), "test");
+                        }
+                        throw new IOException("Marker replacement failed");
+                    }
+                    super.moveAtomically(source, target);
+                }
+            };
+            assertThrows(IOException.class, failing::resolve);
+            assertEquals("v1", Files.readString(cacheDir.resolve("current")));
+            assertEquals(validator, Files.readString(cacheDir.resolve("etag")));
+            assertNoPartialFiles();
+
+            http.manifestStatus = 503;
+            assertEquals(previous, downloader(null, http.url()).resolve().dir());
+            assertEquals("old-bytes", Files.readString(previous.resolve("segments_1")));
+            http.manifestStatus = 200;
+            assertEquals(cacheDir.resolve("v2"), downloader(null, http.url()).resolve().dir());
+            assertEquals(2, http.downloads.get(), "Recovery reuses the fully downloaded inactive version");
+        }
+    }
+
+    @Test
+    void activationReplacesMarkerInsteadOfTruncatingIt() throws Exception {
+        String url = publish("v1", "old-bytes", null);
+        downloader(null, url).resolve();
+        Path oldMarker = tmp.resolve("old-marker");
+        Files.createLink(oldMarker, cacheDir.resolve("current"));
+
+        publish("v2", "new-bytes", null);
+        downloader(null, url).resolve();
+
+        assertEquals("v1", Files.readString(oldMarker), "The previous marker inode must remain intact");
+        assertEquals("v2", Files.readString(cacheDir.resolve("current")));
+        assertNoPartialFiles();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"\"v2\"", "{"})
+    void legacyOrIncompleteValidatorCannotSuppressUpdate(String staleValidator) throws Exception {
+        publish("v1", "old-bytes", null);
+        try (HttpFixture http = new HttpFixture()) {
+            downloader(null, http.url()).resolve();
+            Files.writeString(cacheDir.resolve("etag"), staleValidator);
+            publish("v2", "new-bytes", null);
+            http.etag = "\"v2\"";
+
+            assertEquals(cacheDir.resolve("v2"), downloader(null, http.url()).resolve().dir());
+            assertNull(http.ifNoneMatch);
+        }
+    }
+
+    @Test
+    void validatorIsBoundToManifestUrl() throws Exception {
+        publish("v1", "old-bytes", null);
+        try (HttpFixture http = new HttpFixture()) {
+            downloader(null, http.url()).resolve();
+            publish("v2", "new-bytes", null);
+            // A different manifest may use the same ETag for different content.
+            assertEquals(cacheDir.resolve("v2"), downloader(null, http.url() + "?channel=other").resolve().dir());
+            assertNull(http.ifNoneMatch);
+        }
+    }
+
+    @Test
+    void failedValidatorSaveDoesNotBindOldEtagToNewVersion() throws Exception {
+        publish("v1", "old-bytes", null);
+        try (HttpFixture http = new HttpFixture()) {
+            downloader(null, http.url()).resolve();
+            publish("v2", "new-bytes", null);
+            http.etag = "\"v2\"";
+            IndexDownloader failing = new IndexDownloader(config(null, http.url())) {
+                @Override
+                void moveAtomically(Path source, Path target) throws IOException {
+                    if (target.equals(cacheDir.resolve("etag"))) {
+                        throw new IOException("Validator replacement failed");
+                    }
+                    super.moveAtomically(source, target);
+                }
+            };
+            assertEquals(cacheDir.resolve("v2"), failing.resolve().dir());
+            assertNoPartialFiles();
+
+            assertEquals(cacheDir.resolve("v2"), downloader(null, http.url()).resolve().dir());
+            assertNull(http.ifNoneMatch, "A validator for v1 cannot validate the active v2");
+            assertEquals(cacheDir.resolve("v2"), downloader(null, http.url()).resolve().dir());
+            assertEquals("\"v2\"", http.ifNoneMatch);
+            assertEquals(2, http.downloads.get());
+        }
+    }
+
+    private void assertNoPartialFiles() throws IOException {
+        try (var files = Files.list(cacheDir)) {
+            assertTrue(files.noneMatch(path -> path.getFileName().toString().endsWith(".part")));
+        }
+    }
+
+    private class HttpFixture implements AutoCloseable {
+        final HttpServer server;
+        final AtomicInteger downloads = new AtomicInteger();
+        final AtomicInteger notModified = new AtomicInteger();
+        volatile String etag = "\"v1\"";
+        volatile String ifNoneMatch;
+        volatile int manifestStatus = 200;
+        volatile int assetStatus = 200;
+        volatile boolean corruptArchive;
+
+        HttpFixture() throws IOException {
+            server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/", exchange -> {
+                try (exchange) {
+                    boolean manifest = exchange.getRequestURI().getPath().equals("/index.json");
+                    int status = manifest ? manifestStatus : assetStatus;
+                    if (manifest) {
+                        ifNoneMatch = exchange.getRequestHeaders().getFirst("If-None-Match");
+                        if (etag != null) {
+                            exchange.getResponseHeaders().set("ETag", etag);
+                        }
+                        if (status == 200 && etag != null && etag.equals(ifNoneMatch)) {
+                            notModified.incrementAndGet();
+                            exchange.sendResponseHeaders(304, -1);
+                            return;
+                        }
+                    } else {
+                        downloads.incrementAndGet();
+                    }
+                    byte[] body = !manifest && corruptArchive
+                            ? new byte[]{0}
+                            : Files.readAllBytes(publishDir.resolve(manifest ? "index.json" : "knowledge-index.zip"));
+                    exchange.sendResponseHeaders(status, body.length);
+                    exchange.getResponseBody().write(body);
+                }
+            });
+            server.start();
+        }
+
+        String url() {
+            return "http://127.0.0.1:" + server.getAddress().getPort() + "/index.json";
+        }
+
+        @Override
+        public void close() {
+            server.stop(0);
+        }
     }
 }
