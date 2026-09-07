@@ -18,6 +18,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -391,6 +392,56 @@ class IndexDownloaderTest {
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"bad uri.zip", "bad%zz.zip", "http://[broken"})
+    void malformedAssetFallsBackAndRetriesUnchangedManifest(String asset) throws Exception {
+        publish("v1", "old-bytes", null);
+        try (HttpFixture http = new HttpFixture()) {
+            Path previous = downloader(null, http.url()).resolve().dir();
+            String validator = Files.readString(cacheDir.resolve("etag"));
+            publish("v2", "new-bytes", null);
+            Path manifest = publishDir.resolve("index.json");
+            String validManifest = Files.readString(manifest);
+            var mapper = new ObjectMapper();
+            var invalid = (ObjectNode) mapper.readTree(validManifest);
+            invalid.put("asset", asset);
+            Files.writeString(manifest, mapper.writeValueAsString(invalid));
+            http.etag = "\"v2\"";
+
+            assertEquals(previous, downloader(null, http.url()).resolve().dir());
+            assertEquals("v1", Files.readString(cacheDir.resolve("current")));
+            assertEquals(validator, Files.readString(cacheDir.resolve("etag")));
+            assertEquals("old-bytes", Files.readString(previous.resolve("segments_1")));
+            assertEquals(1, http.downloads.get());
+            assertFalse(Files.exists(cacheDir.resolve("v2")));
+            assertNoPartialFiles();
+
+            Files.writeString(manifest, validManifest);
+            assertEquals(cacheDir.resolve("v2"), downloader(null, http.url()).resolve().dir());
+            assertEquals("new-bytes", Files.readString(cacheDir.resolve("v2/segments_1")));
+            assertEquals(2, http.downloads.get());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"bad uri.zip", "bad%zz.zip", "http://[broken"})
+    void malformedAssetWithEmptyCacheFailsWithoutStaging(String asset) throws Exception {
+        String url = publish("v1", "index-bytes", null);
+        var mapper = new ObjectMapper();
+        Path manifest = publishDir.resolve("index.json");
+        var invalid = (ObjectNode) mapper.readTree(Files.readString(manifest));
+        invalid.put("asset", asset);
+        Files.writeString(manifest, mapper.writeValueAsString(invalid));
+
+        IOException failure = assertThrows(IOException.class, () -> downloader(null, url).resolve());
+        assertTrue(failure.getMessage().contains("Invalid index asset URI"), failure.toString());
+        assertInstanceOf(IllegalArgumentException.class, failure.getCause());
+        assertFalse(Files.exists(cacheDir.resolve("current")));
+        assertFalse(Files.exists(cacheDir.resolve("etag")));
+        assertFalse(Files.exists(cacheDir.resolve("v1")));
+        assertNoPartialFiles();
+    }
+
     @Test
     void successfulHttpResponseWithoutEtagRemovesPreviousValidator() throws Exception {
         publish("v1", "index-bytes", null);
@@ -409,10 +460,14 @@ class IndexDownloaderTest {
 
     @ParameterizedTest
     @ValueSource(strings = {
-            "../outside", "/tmp/outside", "..\\outside", "C:\\outside", ".", "..", "",
+            "../outside", "<absolute-outside>", "..\\outside", "C:\\outside", ".", "..", "",
             "current", "CURRENT", "etag", "ETAG", ".update.lock", "v1.part", "v1.PART", "v1.", "v 1",
             "CON", "nul.txt", "COM1", "LPT9.zip", "v1\u0000"})
     void unsafeManifestVersionsCannotTouchCache(String version) throws Exception {
+        // Keep the historical-code regression overlay inside this test's temporary directory.
+        if (version.equals("<absolute-outside>") || version.equals("C:\\outside") && Path.of(version).isAbsolute()) {
+            version = tmp.resolve("absolute-outside").toAbsolutePath().toString();
+        }
         publish(version, "index-bytes", null);
         try (HttpFixture http = new HttpFixture()) {
             IOException failure = assertThrows(IOException.class, () -> downloader(null, http.url()).resolve());
@@ -455,12 +510,46 @@ class IndexDownloaderTest {
     }
 
     @Test
-    void downloadDoesNotDeleteAnotherInvocationsStagingDirectory() throws Exception {
+    void downloadCleansLegacyStagingDirectories() throws Exception {
         String url = publish("v1", "index-bytes", null);
-        Path otherStage = Files.createDirectories(cacheDir.resolve("v1.part"));
-        Path sentinel = Files.writeString(otherStage.resolve("keep"), "another download");
+        Path sameVersion = Files.createDirectories(cacheDir.resolve("v1.part"));
+        Files.writeString(sameVersion.resolve("segments_1"), "interrupted extraction");
+        Path oldVersion = Files.createDirectory(cacheDir.resolve("v0.part"));
+        Files.writeString(oldVersion.resolve("segments_1"), "older interrupted extraction");
+
         assertEquals(cacheDir.resolve("v1"), downloader(null, url).resolve().dir());
-        assertEquals("another download", Files.readString(sentinel));
+        assertNoPartialFiles();
+        assertEquals("index-bytes", Files.readString(cacheDir.resolve("v1/segments_1")));
+    }
+
+    @Test
+    void cachedResolveCleansOnlyRecognizedLegacyStagingDirectories() throws Exception {
+        String url = publish("v1", "index-bytes", null);
+        Path previous = downloader(null, url).resolve().dir();
+        Path oldStage = Files.createDirectory(cacheDir.resolve("v0.part"));
+        Files.writeString(oldStage.resolve("segments_1"), "interrupted extraction");
+        Path unknownStage = Files.createDirectory(cacheDir.resolve("not a version.part"));
+        Path unknown = Files.writeString(unknownStage.resolve("keep"), "unrelated directory");
+        Path unrelatedFile = Files.writeString(cacheDir.resolve("notes.part"), "unrelated file");
+
+        assertEquals(previous, downloader(null, url).resolve().dir());
+        assertFalse(Files.exists(oldStage));
+        assertEquals("unrelated directory", Files.readString(unknown));
+        assertEquals("unrelated file", Files.readString(unrelatedFile));
+        assertEquals("index-bytes", Files.readString(previous.resolve("segments_1")));
+    }
+
+    @Test
+    void legacyStagingSymlinkIsNotFollowedOrRemoved() throws Exception {
+        String url = publish("v1", "index-bytes", null);
+        Path previous = downloader(null, url).resolve().dir();
+        Path outside = Files.createDirectory(tmp.resolve("outside-staging"));
+        Path sentinel = Files.writeString(outside.resolve("keep"), "untouched");
+        Path link = Files.createSymbolicLink(cacheDir.resolve("v0.part"), outside);
+
+        assertEquals(previous, downloader(null, url).resolve().dir());
+        assertTrue(Files.isSymbolicLink(link));
+        assertEquals("untouched", Files.readString(sentinel));
     }
 
     @Test
@@ -562,8 +651,10 @@ class IndexDownloaderTest {
                     assertEquals(cacheDir.resolve("v1"), second.get(20, TimeUnit.SECONDS).dir());
                 }
                 assertEquals(1, http.downloads.get());
-                assertEquals(1, http.notModified.get());
+                // A waiting process can reuse the newly activated cache before its owner releases the lock.
+                assertTrue(http.notModified.get() <= 1);
                 assertEquals("v1", Files.readString(cacheDir.resolve("current")));
+                assertEquals("index-bytes", Files.readString(cacheDir.resolve("v1/segments_1")));
                 assertNoPartialFiles();
             } finally {
                 http.releaseDownload.countDown();

@@ -6,8 +6,11 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
+import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
+import java.nio.channels.OverlappingFileLockException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -20,9 +23,15 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.Flow;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -59,14 +68,18 @@ public class IndexDownloader {
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(3);
     private static final Duration MANIFEST_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration ASSET_TIMEOUT = Duration.ofMinutes(5);
+    private static final Duration LOCK_TIMEOUT = Duration.ofSeconds(5);
 
     // ponytail: one configured cache per server; serialize JVM callers to avoid overlapping file locks.
-    private static final Object CACHE_MONITOR = new Object();
+    private static final ReentrantLock CACHE_LOCK = new ReentrantLock();
     private static final Pattern STAGING_NAME = Pattern.compile(
             "(?:\\.index|current|etag)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.part"
                                                                 + "|index-[0-9]+\\.zip\\.part");
 
     private final IndexResolverConfig config;
+    private final Duration lockTimeout;
+    private final Duration manifestTimeout;
+    private final Duration assetTimeout;
     private final ObjectMapper mapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newBuilder()
             .followRedirects(HttpClient.Redirect.NORMAL)
@@ -82,7 +95,14 @@ public class IndexDownloader {
 
     @Inject
     public IndexDownloader(IndexResolverConfig config) {
+        this(config, LOCK_TIMEOUT, MANIFEST_TIMEOUT, ASSET_TIMEOUT);
+    }
+
+    IndexDownloader(IndexResolverConfig config, Duration lockTimeout, Duration manifestTimeout, Duration assetTimeout) {
         this.config = config;
+        this.lockTimeout = lockTimeout;
+        this.manifestTimeout = manifestTimeout;
+        this.assetTimeout = assetTimeout;
     }
 
     public ResolvedIndex resolve() throws IOException {
@@ -99,23 +119,61 @@ public class IndexDownloader {
         // 2. Manifest + local cache
         Path cacheDir = Path.of(config.cacheDir()).toAbsolutePath().normalize();
         Files.createDirectories(cacheDir);
-        synchronized (CACHE_MONITOR) {
+        boolean locked = false;
+        long deadline = System.nanoTime() + lockTimeout.toNanos();
+        try {
+            locked = CACHE_LOCK.tryLock();
+            if (!locked && cachedDirectory(cacheDir) == null) {
+                locked = CACHE_LOCK.tryLock(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+            }
+            if (!locked) {
+                throw new IOException("Index cache update lock is busy");
+            }
             // Keep this file: deleting a lock file would let processes lock different inodes.
             try (FileChannel channel = FileChannel.open(cacheDir.resolve(".update.lock"),
                     StandardOpenOption.CREATE, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
-                 FileLock lock = channel.lock()) {
+                 FileLock lock = acquireFileLock(channel, cacheDir, deadline)) {
                 cleanupStaging(cacheDir);
                 return resolveCached(cacheDir);
-            } catch (IOException e) {
-                // Re-read after lock/update failure; another process may have activated a version.
-                Path cachedDir = cachedDirectory(cacheDir);
-                if (cachedDir != null) {
-                    LOG.warn("Index update failed ({}); using cached version {}", e.getMessage(),
-                            cachedDir.getFileName());
-                    return new ResolvedIndex(cachedDir, false);
-                }
-                throw e;
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Index cache update interrupted", e);
+        } catch (IOException e) {
+            // Re-read after lock/update failure; another process may have activated a version.
+            Path cachedDir = cachedDirectory(cacheDir);
+            if (cachedDir != null) {
+                LOG.warn("Index update failed ({}); using cached version {}", e.toString(),
+                        cachedDir.getFileName());
+                return new ResolvedIndex(cachedDir, false);
+            }
+            throw e;
+        } finally {
+            if (locked) {
+                CACHE_LOCK.unlock();
+            }
+        }
+    }
+
+    private FileLock acquireFileLock(FileChannel channel, Path cacheDir, long deadline)
+            throws IOException, InterruptedException {
+        while (true) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new InterruptedException();
+            }
+            try {
+                FileLock lock = channel.tryLock();
+                if (lock != null) {
+                    return lock;
+                }
+            } catch (OverlappingFileLockException e) {
+                // A caller outside this resolver may hold a lock in this JVM.
+            }
+            long remaining = deadline - System.nanoTime();
+            if (cachedDirectory(cacheDir) != null || remaining <= 0) {
+                throw new IOException("Index cache update lock is busy");
+            }
+            TimeUnit.NANOSECONDS.sleep(Math.min(remaining, TimeUnit.MILLISECONDS.toNanos(50)));
         }
     }
 
@@ -139,7 +197,7 @@ public class IndexDownloader {
                 Thread.currentThread().interrupt();
             }
             if (haveCached) {
-                LOG.warn("Index manifest check failed ({}); using cached version {}", e.getMessage(), cachedVersion);
+                LOG.warn("Index manifest check failed ({}); using cached version {}", e.toString(), cachedVersion);
                 return new ResolvedIndex(cachedDir, false);
             }
             throw new IOException(
@@ -184,7 +242,7 @@ public class IndexDownloader {
                 }
             }
         } catch (IOException e) {
-            LOG.warn("Cannot use cached index marker: {}", e.getMessage());
+            LOG.warn("Cannot use cached index marker: {}", e.toString());
         }
         return null;
     }
@@ -215,23 +273,25 @@ public class IndexDownloader {
         if ("file".equals(uri.getScheme())) {
             body = Files.readAllBytes(Path.of(uri));
         } else {
-            HttpRequest.Builder request = HttpRequest.newBuilder(uri).timeout(MANIFEST_TIMEOUT).GET();
+            HttpRequest.Builder request = HttpRequest.newBuilder(uri).timeout(manifestTimeout).GET();
             String cachedEtag = readValidator(cacheDir, uri, cachedVersion);
             if (cachedEtag != null) {
                 request.header("If-None-Match", cachedEtag);
             }
-            HttpResponse<byte[]> response = httpClient.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
-            if (response.statusCode() == 304) {
-                if (cachedEtag == null) {
-                    throw new IOException("Manifest returned HTTP 304 without a matching cached validator");
+            HttpResponse<InputStream> response = send(request.build());
+            try (InputStream in = response.body()) {
+                if (response.statusCode() == 304) {
+                    if (cachedEtag == null) {
+                        throw new IOException("Manifest returned HTTP 304 without a matching cached validator");
+                    }
+                    return null;
                 }
-                return null;
+                if (response.statusCode() != 200) {
+                    throw new IOException("Manifest fetch returned HTTP " + response.statusCode());
+                }
+                etag = response.headers().firstValue("ETag").orElse(null);
+                body = in.readAllBytes();
             }
-            if (response.statusCode() != 200) {
-                throw new IOException("Manifest fetch returned HTTP " + response.statusCode());
-            }
-            etag = response.headers().firstValue("ETag").orElse(null);
-            body = response.body();
         }
 
         JsonNode root = mapper.readTree(new String(body, StandardCharsets.UTF_8));
@@ -277,7 +337,7 @@ public class IndexDownloader {
                 writeAtomically(cacheDir.resolve("etag"), validator);
             }
         } catch (IOException e) {
-            LOG.warn("Cannot save index manifest validator: {}", e.getMessage());
+            LOG.warn("Cannot save index manifest validator: {}", e.toString());
         }
     }
 
@@ -314,7 +374,12 @@ public class IndexDownloader {
 
     private void downloadAndUnpack(URI manifestUri, Manifest manifest, Path cacheDir, Path versionDir)
             throws IOException {
-        URI assetUri = manifestUri.resolve(manifest.asset());
+        final URI assetUri;
+        try {
+            assetUri = manifestUri.resolve(manifest.asset());
+        } catch (IllegalArgumentException e) {
+            throw new IOException("Invalid index asset URI: " + manifest.asset(), e);
+        }
         LOG.info("Downloading knowledge index {} from {} ...", manifest.version(), assetUri);
 
         Path zipFile = Files.createTempFile(cacheDir, "index-", ".zip.part");
@@ -367,13 +432,128 @@ public class IndexDownloader {
         if ("file".equals(uri.getScheme())) {
             return Files.newInputStream(Path.of(uri));
         }
-        HttpRequest request = HttpRequest.newBuilder(uri).timeout(ASSET_TIMEOUT).GET().build();
-        HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        HttpRequest request = HttpRequest.newBuilder(uri).timeout(assetTimeout).GET().build();
+        HttpResponse<InputStream> response = send(request);
         if (response.statusCode() != 200) {
             response.body().close();
             throw new IOException("Index download returned HTTP " + response.statusCode() + " for " + uri);
         }
         return response.body();
+    }
+
+    private HttpResponse<InputStream> send(HttpRequest request) throws IOException, InterruptedException {
+        long deadline = System.nanoTime() + request.timeout().orElseThrow().toNanos();
+        return httpClient.send(request, info -> HttpResponse.BodySubscribers.mapping(
+                HttpResponse.BodySubscribers.ofPublisher(), publisher -> new TimedBody(publisher, deadline)));
+    }
+
+    /** Bounded HTTP buffering; only the resolving thread reads or writes index files. */
+    private static final class TimedBody extends InputStream implements Flow.Subscriber<List<ByteBuffer>> {
+        private static final List<ByteBuffer> END = List.of(ByteBuffer.allocate(0));
+        private final ArrayBlockingQueue<List<ByteBuffer>> buffers = new ArrayBlockingQueue<>(2);
+        private final long deadline;
+        private Iterator<ByteBuffer> current = List.<ByteBuffer>of().iterator();
+        private ByteBuffer buffer = ByteBuffer.allocate(0);
+        private Flow.Subscription subscription;
+        private volatile Throwable failure;
+        private boolean closed;
+        private boolean requestNext;
+        private boolean ended;
+
+        TimedBody(Flow.Publisher<List<ByteBuffer>> publisher, long deadline) {
+            this.deadline = deadline;
+            publisher.subscribe(this);
+        }
+
+        @Override
+        public synchronized void onSubscribe(Flow.Subscription next) {
+            if (closed) {
+                next.cancel();
+            } else {
+                subscription = next;
+                next.request(1);
+            }
+        }
+
+        @Override
+        public void onNext(List<ByteBuffer> item) {
+            buffers.add(item);
+        }
+
+        @Override
+        public void onError(Throwable error) {
+            failure = error;
+            buffers.add(END);
+        }
+
+        @Override
+        public void onComplete() {
+            buffers.add(END);
+        }
+
+        @Override
+        public int read() throws IOException {
+            byte[] single = new byte[1];
+            return read(single, 0, 1) < 0 ? -1 : Byte.toUnsignedInt(single[0]);
+        }
+
+        @Override
+        public int read(byte[] bytes, int offset, int length) throws IOException {
+            java.util.Objects.checkFromIndexSize(offset, length, bytes.length);
+            if (length == 0) {
+                return 0;
+            }
+            while (true) {
+                if (Thread.currentThread().isInterrupted()) {
+                    throw new IOException("Index HTTP response interrupted");
+                }
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    throw new HttpTimeoutException("Index HTTP response body timed out");
+                }
+                if (buffer.hasRemaining()) {
+                    int count = Math.min(length, buffer.remaining());
+                    buffer.get(bytes, offset, count);
+                    return count;
+                }
+                if (current.hasNext()) {
+                    buffer = current.next();
+                } else if (ended) {
+                    return -1;
+                } else {
+                    if (requestNext) {
+                        subscription.request(1);
+                    }
+                    final List<ByteBuffer> next;
+                    try {
+                        next = buffers.poll(remaining, TimeUnit.NANOSECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IOException("Index HTTP response interrupted", e);
+                    }
+                    if (next == null) {
+                        throw new HttpTimeoutException("Index HTTP response body timed out");
+                    }
+                    if (next == END) {
+                        if (failure != null) {
+                            throw new IOException("Index HTTP response failed", failure);
+                        }
+                        ended = true;
+                    } else {
+                        current = next.iterator();
+                        requestNext = true;
+                    }
+                }
+            }
+        }
+
+        @Override
+        public synchronized void close() {
+            closed = true;
+            if (subscription != null) {
+                subscription.cancel();
+            }
+        }
     }
 
     /** Unzips, stripping the single top-level directory the archive is rooted at (e.g. "knowledge-index/"). */
@@ -406,11 +586,27 @@ public class IndexDownloader {
     /** Called only while holding the update lock, so matching staging files belong to interrupted attempts. */
     private void cleanupStaging(Path cacheDir) {
         try (var entries = Files.list(cacheDir)) {
-            entries.filter(path -> STAGING_NAME.matcher(path.getFileName().toString()).matches())
+            entries.filter(IndexDownloader::isStaging)
                     .forEach(IndexDownloader::deleteRecursively);
         } catch (IOException e) {
-            LOG.warn("Cannot clean interrupted index downloads: {}", e.getMessage());
+            LOG.warn("Cannot clean interrupted index downloads: {}", e.toString());
         }
+    }
+
+    private static boolean isStaging(Path path) {
+        String name = path.getFileName().toString();
+        if (STAGING_NAME.matcher(name).matches()) {
+            return true;
+        }
+        if (name.endsWith(".part") && Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+            try {
+                validateVersion(name.substring(0, name.length() - ".part".length()));
+                return true;
+            } catch (IOException e) {
+                // Unknown directories and symlinks are not abandoned legacy downloads.
+            }
+        }
+        return false;
     }
 
     /** Keeps the current and previous versions; deletes anything older. */

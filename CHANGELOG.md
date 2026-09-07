@@ -49,7 +49,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Atomic replacement depends on filesystem support and does not guarantee power-loss durability.
   Metadata honors the process umask and preserves existing POSIX permissions. Concurrent cache
   updates are serialized across threads and processes and use separate staging directories.
-  Reject unsafe version names and symbolic-link version directories before activation.
+  Clean recognized interrupted staging files, including safe legacy `<version>.part` directories.
+  Reject unsafe version names and symbolic-link version directories before activation; malformed or
+  unsupported archive URLs preserve the active cached index.
+- **Bounded index updates** — immediately use a readable active cache when another updater holds
+  the lock; without a usable cache, wait at most five seconds in total for the lock before failing.
+  Cache updates require filesystem advisory-lock support as well as atomic moves; a lock failure
+  preserves service from a readable active cache. Enforce the five-second manifest and five-minute
+  archive request deadlines through the response body, with a three-second connection timeout.
 - **CVE search returned zero results for every query** — the searcher required `doc_type:"errata"`
   while the indexer writes `"cve"`; security searches now match both document generations, guarded
   by an end-to-end test.
