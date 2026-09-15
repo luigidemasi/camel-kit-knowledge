@@ -78,7 +78,7 @@ class RetrievalQualityTest {
         assertTrue(versions.contains("4.22"), "Production index must cover Camel 4.22; got " + versions);
         assertTrue(versions.contains("4.18"), "Production index must cover Camel 4.18 LTS; got " + versions);
         assertTrue(versions.contains("4.21"), "Production index must retain Camel 4.21 history; got " + versions);
-        for (String version : List.of("4.18", "4.21", "4.22")) {
+        for (String version : List.of("4.18", "4.22")) {
             String expectedId = "apache-camel-" + version + "-catalog-component-timer";
             int matches = searchService.getSearcher().count(new TermQuery(new Term(KnowledgeFields.ID, expectedId)));
             assertTrue(matches == 1,

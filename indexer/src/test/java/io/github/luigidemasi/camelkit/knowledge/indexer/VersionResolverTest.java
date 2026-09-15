@@ -109,10 +109,10 @@ class VersionResolverTest {
                 "Active LTS 4.14 should be included");
     }
 
-    // ── 3. retainsLatestNonLtsWhenNewerLtsExists ────────────────────────
+    // ── 3. excludesNonLtsWhenNewerLtsExists ────────────────────────────
 
     @Test
-    void retainsLatestNonLtsWhenNewerLtsExists() throws Exception {
+    void excludesNonLtsWhenNewerLtsExists() throws Exception {
         Path releasesDir = tempDir.resolve("content/releases");
         Files.createDirectories(releasesDir);
 
@@ -167,7 +167,52 @@ class VersionResolverTest {
         LocalDate today = LocalDate.of(2026, 9, 4);
         List<CamelRelease> active = VersionResolver.activeVersions(tempDir, today);
 
-        assertEquals(List.of("4.18", "4.21", "4.22"), active.stream().map(CamelRelease::minor).toList());
+        assertEquals(List.of("4.18", "4.22"), active.stream().map(CamelRelease::minor).toList());
+    }
+
+    @Test
+    void selectsLatestPublishedPatchOfEachSupportedLine() throws Exception {
+        writeRelease("4.14.8", "kind: lts\neol: 2026-09-15\n");
+        writeRelease("4.18.0", "kind: lts\neol: 2027-02-10\n");
+        writeRelease("4.18.4", "kind: lts\neol: 2027-02-10\n");
+        writeRelease("4.22.0", "kind: lts\neol: 2027-08-10\n");
+        writeRelease("4.23.0", "");
+        writeRelease("4.24.0", "");
+        writeRelease("4.24.1", "");
+
+        List<CamelRelease> active = VersionResolver.activeVersions(tempDir, LocalDate.of(2026, 9, 15));
+
+        assertEquals(List.of("4.18.4", "4.22.0", "4.24.1"),
+                active.stream().map(CamelRelease::version).toList());
+    }
+
+    @Test
+    void ignoresDraftAndFutureReleasesBeforeSelectingLatest() throws Exception {
+        writeRelease("4.18.4", "kind: lts\neol: 2027-02-10\n");
+        writeRelease("4.22.0", "kind: lts\neol: 2027-08-10\n");
+        writeRelease("4.22.1", "kind: lts\neol: 2027-08-10\ndate: 2026-09-16\n");
+        writeRelease("4.23.0", "date: 2026-09-15\n");
+        writeRelease("4.24.0", "date: 2026-09-16\n");
+        writeRelease("4.26.0", "kind: lts\neol: 2028-01-01\ndraft: true\n");
+
+        List<CamelRelease> active = VersionResolver.activeVersions(tempDir, LocalDate.of(2026, 9, 15));
+
+        assertEquals(List.of("4.18.4", "4.22.0", "4.23.0"),
+                active.stream().map(CamelRelease::version).toList());
+    }
+
+    @Test
+    void doesNotReactivateOldNonLtsAfterNewerLtsExpires() throws Exception {
+        writeRelease("4.21.0", "");
+        writeRelease("4.22.0", "kind: lts\neol: 2027-08-10\n");
+
+        assertTrue(VersionResolver.activeVersions(tempDir, LocalDate.of(2027, 8, 10)).isEmpty());
+    }
+
+    private void writeRelease(String version, String metadata) throws Exception {
+        Path releasesDir = Files.createDirectories(tempDir.resolve("content/releases"));
+        Files.writeString(releasesDir.resolve("release-" + version + ".md"),
+                "---\ncategory: camel\n" + metadata + "---\nRelease notes.\n");
     }
 
     // ── 4. ignoresNonCamelReleases ──────────────────────────────────────

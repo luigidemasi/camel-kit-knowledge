@@ -42,6 +42,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CVE enrichment during NVD outages** — fall back to CIRCL's FKIE NVD mirror on HTTP errors,
+  timeouts, or invalid/missing records. Pace requests, honor rate-limit cooldowns, validate CVE IDs,
+  and cache successful responses with provenance. Preserve Apache advisories when enrichment fails.
+
+- **Dynamic index version selection** — refresh Camel website release metadata on rebuild and
+  select supported LTS lines plus the latest release line only when it is non-LTS. A newer LTS
+  supersedes older non-LTS lines; future non-LTS releases are selected automatically when published.
+  Ignore draft and future-dated release entries, and remove the retrieval gate's requirement for
+  a superseded Camel 4.21 catalog. Historical release notes and version-independent CVE advisories
+  remain searchable.
 - **Index update recovery** — persist manifest ETags only after activation and bind them to the
   installed version and manifest URL, so failed updates and legacy stale validators cannot suppress
   a retry. Replace the active marker atomically; unsupported or failed marker replacement leaves
