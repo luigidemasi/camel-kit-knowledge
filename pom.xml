@@ -7,7 +7,7 @@
     <groupId>io.github.luigidemasi</groupId>
     <artifactId>camel-kit-knowledge</artifactId>
     <packaging>pom</packaging>
-    <version>0.0.1</version>
+    <version>0.0.2-SNAPSHOT</version>
 
     <name>Camel Kit :: Knowledge</name>
     <url>https://github.com/luigidemasi/camel-kit-knowledge</url>
@@ -23,7 +23,7 @@
         <connection>scm:git:https://github.com/luigidemasi/camel-kit-knowledge.git</connection>
         <developerConnection>scm:git:https://github.com/luigidemasi/camel-kit-knowledge.git</developerConnection>
         <url>https://github.com/luigidemasi/camel-kit-knowledge</url>
-        <tag>camel-kit-knowledge-0.0.1</tag>
+        <tag>HEAD</tag>
     </scm>
 
     <description>Knowledge layer aggregator — shared schema, embedding, indexer, and MCP server</description>
