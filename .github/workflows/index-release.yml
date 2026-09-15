@@ -73,6 +73,7 @@ jobs:
         run: |
           gh release create "${{ steps.package.outputs.tag }}" \
             knowledge-index.zip index.json \
+            --target "$GITHUB_SHA" \
             --latest \
             --title "Knowledge index ${{ steps.package.outputs.version }}" \
             --notes "$(jq -r '"Docs: \(.docCount) · Model: \(.embeddingModel) · Camel versions: \(.camelVersions | join(", ")) · Built: \(.builtAt)"' index.json)"

@@ -7,9 +7,24 @@
     <groupId>io.github.luigidemasi</groupId>
     <artifactId>camel-kit-knowledge</artifactId>
     <packaging>pom</packaging>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.0.1</version>
 
     <name>Camel Kit :: Knowledge</name>
+    <url>https://github.com/luigidemasi/camel-kit-knowledge</url>
+
+    <developers>
+        <developer>
+            <name>Luigi De Masi</name>
+            <email>luigidemasi@gmail.com</email>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:https://github.com/luigidemasi/camel-kit-knowledge.git</connection>
+        <developerConnection>scm:git:https://github.com/luigidemasi/camel-kit-knowledge.git</developerConnection>
+        <url>https://github.com/luigidemasi/camel-kit-knowledge</url>
+        <tag>camel-kit-knowledge-0.0.1</tag>
+    </scm>
 
     <description>Knowledge layer aggregator — shared schema, embedding, indexer, and MCP server</description>
 
@@ -361,6 +376,80 @@
                                     <version>${error-prone.version}</version>
                                 </path>
                             </annotationProcessorPaths>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <!-- Attach source JARs -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.3.1</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+
+                    <!-- Attach Javadoc JARs -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.11.2</version>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <doclint>none</doclint>
+                            <quiet>true</quiet>
+                            <failOnError>false</failOnError>
+                            <failOnWarnings>false</failOnWarnings>
+                        </configuration>
+                    </plugin>
+
+                    <!-- Sign artifacts with GPG -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.7</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+
+                    <!-- Central Publishing Maven Plugin -->
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.9.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <excludeArtifacts>
+                                <excludeArtifact>camel-kit-knowledge-index</excludeArtifact>
+                            </excludeArtifacts>
+                            <autoPublish>true</autoPublish>
+                            <waitUntil>published</waitUntil>
                         </configuration>
                     </plugin>
                 </plugins>

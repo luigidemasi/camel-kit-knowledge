@@ -2,6 +2,10 @@
 
 Knowledge layer for [camel-kit](https://github.com/luigidemasi/camel-kit) -- semantic search over Apache Camel documentation, release notes, CVE advisories, and component metadata.
 
+Release **0.0.1** is the Knowledge MCP version used by Camel Kit **0.4.0**.
+Development continues at **0.0.2-SNAPSHOT**. The downloadable knowledge index has its own
+`index-*` release version and can be updated independently of the server.
+
 ## Modules
 
 | Module | Description |
@@ -58,7 +62,7 @@ Component documentation is converted directly from AsciiDoc to Markdown via a cu
 ### Normal build (uses pre-built index)
 
 ```bash
-mvn clean install
+./mvnw -B clean install
 ```
 
 The MCP module downloads the ONNX embedding model from HuggingFace during `generate-resources` (skipped if already cached).
@@ -153,11 +157,18 @@ BM25 + reranker with a loud log line.
 
 ```bash
 # Via JBang (recommended)
-jbang --repos central_snap=https://central.sonatype.com/repository/maven-snapshots/ \
-  io.github.luigidemasi:camel-kit-knowledge-mcp:0.0.1-SNAPSHOT:runner
+jbang io.github.luigidemasi:camel-kit-knowledge-mcp:0.0.1:runner
 
-# Or directly
-java -jar mcp/target/camel-kit-knowledge-mcp-0.0.1-SNAPSHOT-runner.jar
+# Or run the local build (after ./mvnw -B clean install)
+java -jar mcp/target/camel-kit-knowledge-mcp-*-runner.jar
+```
+
+The server uses stdio by default and does not open an HTTP port. To enable the
+HTTP and SSE transports explicitly on localhost:
+
+```bash
+jbang -Dquarkus.http.host-enabled=true -Dquarkus.http.host=127.0.0.1 \
+  -Dquarkus.http.port=9090 io.github.luigidemasi:camel-kit-knowledge-mcp:0.0.1:runner
 ```
 
 To pin a specific index or run air-gapped:
@@ -216,6 +227,8 @@ Component lookups (`camel_docs_component_info`) use pure BM25 for exact matching
 | `indexer/src/main/resources/apache-camel/embedding-cache/` | Chunk embeddings keyed by model+text (incremental rebuilds) |
 
 Apache JIRA (CAMEL-* issues) is public and requires no authentication.
+
+See [Releasing](docs/releasing.md) for the maintainer publication procedure.
 
 ## License
 

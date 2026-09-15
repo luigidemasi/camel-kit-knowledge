@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.1] - 2026-09-15
+
+First fixed-version release of the Knowledge MCP server and supporting libraries.
+
 ### Added
 
 - **Cross-encoder reranker** — `ms-marco-MiniLM-L-6-v2` (~23 MB ONNX) reranks the top-30 hybrid
@@ -41,6 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Java 25** added to the CI build matrix (17, 21, 25).
 
 ### Fixed
+
+- **Stdio-only server default** — disable the HTTP listener explicitly; the old `port=-1` setting
+  opened a random network port. HTTP/SSE now requires `quarkus.http.host-enabled=true`.
+- **MCP protocol version** — advertise the packaged application version instead of a hardcoded `1.0.0`.
 
 - **CVE enrichment during NVD outages** — fall back to CIRCL's FKIE NVD mirror on HTTP errors,
   timeouts, or invalid/missing records. Pace requests, honor rate-limit cooldowns, validate CVE IDs,
@@ -112,3 +120,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dead code** — `DocumentFetcher`, the inert `WeightEvaluationTest` (superseded by
   `RetrievalQualityTest`), and stale Red Hat–era references (errata wording, `RhBuildCamelDomain`
   mentions).
+
+[Unreleased]: https://github.com/luigidemasi/camel-kit-knowledge/compare/camel-kit-knowledge-0.0.1...HEAD
+[0.0.1]: https://github.com/luigidemasi/camel-kit-knowledge/releases/tag/camel-kit-knowledge-0.0.1
