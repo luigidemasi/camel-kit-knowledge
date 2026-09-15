@@ -7,10 +7,18 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -40,6 +48,12 @@ public class CveParser {
             = Pattern.compile("\\b[Cc]amel\\s+([A-Z][a-zA-Z]+)\\s+(?:component|extension)", Pattern.CASE_INSENSITIVE);
 
     private static final String NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=";
+
+    // CIRCL's FKIE feed preserves the NVD record format; the unprefixed CVE endpoint serves CVE JSON 5 instead.
+    private static final String CIRCL_API_URL = "https://vulnerability.circl.lu/api/vulnerability/fkie_";
+
+    private static final EnrichmentClient ENRICHMENT_CLIENT
+            = new EnrichmentClient(NVD_API_URL, CIRCL_API_URL, Duration.ofSeconds(15), Duration.ofMillis(6100));
 
     public record CveAdvisory(
             String cveId,
@@ -128,42 +142,45 @@ public class CveParser {
     }
 
     /**
-     * Enrich a CveAdvisory with NVD data. Best-effort — returns original if NVD unavailable.
+     * Enrich with cached NVD data, then NVD directly, then CIRCL's FKIE NVD mirror. Best-effort — returns the original
+     * advisory if neither service provides a matching record.
      */
     public static CveAdvisory enrichWithNvd(CveAdvisory cve, Path cacheDir) {
-        if (cve == null || cve.cveId() == null)
+        return enrichWithNvd(cve, cacheDir, ENRICHMENT_CLIENT);
+    }
+
+    static CveAdvisory enrichWithNvd(CveAdvisory cve, Path cacheDir, EnrichmentClient client) {
+        if (cve == null || cve.cveId() == null || !cve.cveId().matches("(?i)CVE-\\d{4}-\\d{4,}"))
             return cve;
 
         Path cacheFile = cacheDir.resolve(cve.cveId() + ".json");
-
-        String json;
+        String json = null;
         if (Files.exists(cacheFile)) {
             try {
                 json = Files.readString(cacheFile);
-            } catch (IOException e) {
+                nvdRecord(json, cve.cveId(), false);
+            } catch (IOException | RuntimeException e) {
+                LOG.warn("  Ignoring unreadable CVE cache for {}: {}", cve.cveId(), e.getMessage());
+                json = null;
+            }
+        }
+        if (json == null) {
+            try {
+                json = client.lookup(cve.cveId());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
                 return cve;
             }
-        } else {
+            if (json == null) {
+                LOG.warn("  No NVD enrichment available from NVD or CIRCL for {} — retaining Apache advisory",
+                        cve.cveId());
+                return cve;
+            }
             try {
-                HttpClient client = HttpClient.newHttpClient();
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(NVD_API_URL + cve.cveId()))
-                        .header("Accept", "application/json")
-                        .build();
-                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-                if (response.statusCode() != 200) {
-                    // NVD rate-limits unauthenticated clients (~5 req/30s) — without this log,
-                    // missing enrichment on a fresh cache is invisible
-                    LOG.warn("  NVD returned HTTP {} for {} — skipping enrichment", response.statusCode(),
-                            cve.cveId());
-                    return cve;
-                }
-                json = response.body();
                 Files.createDirectories(cacheDir);
                 Files.writeString(cacheFile, json);
-            } catch (Exception e) {
-                LOG.warn("  NVD lookup failed for {}: {}", cve.cveId(), e.getMessage());
-                return cve;
+            } catch (IOException e) {
+                LOG.warn("  Could not cache CVE enrichment for {}: {}", cve.cveId(), e.getMessage());
             }
         }
 
@@ -178,6 +195,98 @@ public class CveParser {
                 cve.affected(), cve.fixedVersions(), cve.affectedVersions(), cve.affectedComponent(),
                 cve.jiraIds(), cve.publishedDate(), cve.mitigation(), cve.body(),
                 cvssScore, cvssVector, cweId);
+    }
+
+    private static JSONObject nvdRecord(String json, String cveId, boolean mirror) {
+        JSONObject response = new JSONObject(json);
+        JSONObject record
+                = mirror ? response : response.getJSONArray("vulnerabilities").getJSONObject(0).getJSONObject("cve");
+        if (!cveId.equalsIgnoreCase(record.getString("id"))) {
+            throw new IllegalArgumentException("CVE response does not match " + cveId);
+        }
+        return record;
+    }
+
+    /** One bounded request per service, with shared pacing and server-requested cooldowns. */
+    static final class EnrichmentClient {
+        private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+        private final String nvdUrl;
+        private final String circlUrl;
+        private final Duration timeout;
+        private final Duration interval;
+        private final Map<String, Instant> retryAfter = new HashMap<>();
+        private long nextRequestNanos = System.nanoTime();
+
+        EnrichmentClient(String nvdUrl, String circlUrl, Duration timeout, Duration interval) {
+            this.nvdUrl = nvdUrl;
+            this.circlUrl = circlUrl;
+            this.timeout = timeout;
+            this.interval = interval;
+        }
+
+        synchronized String lookup(String cveId) throws InterruptedException {
+            String json = fetch(cveId, nvdUrl, false);
+            return json != null ? json : fetch(cveId, circlUrl, true);
+        }
+
+        private String fetch(String cveId, String baseUrl, boolean mirror) throws InterruptedException {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new InterruptedException();
+            }
+            if (Instant.now().isBefore(retryAfter.getOrDefault(baseUrl, Instant.EPOCH))) {
+                return null;
+            }
+            String source = mirror ? "CIRCL/FKIE NVD" : "NVD";
+            String url = baseUrl + (mirror ? cveId.toLowerCase(Locale.ROOT) : cveId);
+            TimeUnit.NANOSECONDS.sleep(Math.max(0, nextRequestNanos - System.nanoTime()));
+            nextRequestNanos = System.nanoTime() + interval.toNanos();
+            try {
+                HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                        .timeout(timeout)
+                        .header("Accept", "application/json")
+                        .header("User-Agent",
+                                "camel-kit-knowledge (+https://github.com/luigidemasi/camel-kit-knowledge)")
+                        .build();
+                var pending = http.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> response;
+                try {
+                    // Bound the entire response, including a stalled body after successful headers.
+                    response = pending.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+                } finally {
+                    pending.cancel(true);
+                }
+                if (response.statusCode() != 200) {
+                    if (response.statusCode() == 429 || response.statusCode() == 503) {
+                        retryAfter.put(baseUrl, retryAt(response.headers().firstValue("Retry-After").orElse("30")));
+                    }
+                    LOG.warn("  {} returned HTTP {} for {}", source, response.statusCode(), cveId);
+                    return null;
+                }
+                JSONObject record = nvdRecord(response.body(), cveId, mirror);
+                LOG.debug("  Enriched {} from {}", cveId, source);
+                return new JSONObject()
+                        .put("vulnerabilities", new JSONArray().put(new JSONObject().put("cve", record)))
+                        .put("enrichmentSource", source)
+                        .put("enrichmentUrl", url)
+                        .put("enrichmentFetchedAt", Instant.now().toString())
+                        .toString();
+            } catch (ExecutionException | TimeoutException | RuntimeException e) {
+                LOG.warn("  {} lookup failed for {}: {}", source, cveId, e.getMessage());
+                return null;
+            }
+        }
+
+        private static Instant retryAt(String value) {
+            try {
+                return Instant.now().plusSeconds(Math.max(0, Long.parseLong(value)));
+            } catch (RuntimeException e) {
+                try {
+                    return ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant();
+                } catch (RuntimeException ignored) {
+                    return Instant.now().plusSeconds(30);
+                }
+            }
+        }
     }
 
     /**
@@ -269,8 +378,26 @@ public class CveParser {
     }
 
     private static String extractCweFromNvd(String json) {
-        Pattern p = Pattern.compile("\"value\"\\s*:\\s*\"(CWE-\\d+)");
-        Matcher m = p.matcher(json);
-        return m.find() ? m.group(1) : null;
+        JSONObject record = new JSONObject(json).getJSONArray("vulnerabilities").getJSONObject(0).getJSONObject("cve");
+        JSONArray weaknesses = record.optJSONArray("weaknesses");
+        if (weaknesses != null) {
+            for (int i = 0; i < weaknesses.length(); i++) {
+                JSONObject weakness = weaknesses.optJSONObject(i);
+                if (weakness == null)
+                    continue;
+                JSONArray descriptions = weakness.optJSONArray("description");
+                if (descriptions == null)
+                    continue;
+                for (int j = 0; j < descriptions.length(); j++) {
+                    JSONObject description = descriptions.optJSONObject(j);
+                    if (description == null)
+                        continue;
+                    String value = description.optString("value");
+                    if (value.matches("CWE-\\d+"))
+                        return value;
+                }
+            }
+        }
+        return null;
     }
 }

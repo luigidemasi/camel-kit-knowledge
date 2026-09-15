@@ -83,7 +83,7 @@ public class VersionResolver {
      * repo and parses their YAML frontmatter.
      *
      * @param  websiteRepoDir root of the camel-website checkout
-     * @return                list of parsed releases with {@code category: camel} only
+     * @return                list of non-draft releases with {@code category: camel} only
      */
     public static List<CamelRelease> parseReleases(Path websiteRepoDir) throws IOException {
         Path releasesDir = websiteRepoDir.resolve("content/releases");
@@ -111,7 +111,7 @@ public class VersionResolver {
 
                 // Only include category: camel
                 String category = (String) frontmatter.get("category");
-                if (!"camel".equals(category))
+                if (!"camel".equals(category) || Boolean.TRUE.equals(frontmatter.get("draft")))
                     continue;
 
                 // Extract minor version from filename
@@ -154,9 +154,9 @@ public class VersionResolver {
      * Filters releases to active versions:
      * <ul>
      * <li>LTS releases with {@code eol > today}</li>
-     * <li>The single latest non-LTS release (by minor version), retained for historical searches even when a newer LTS
-     * exists</li>
+     * <li>The latest release line, only if it is non-LTS</li>
      * </ul>
+     * Draft and future-dated releases are excluded; each line uses its highest published patch version.
      */
     public static List<CamelRelease> activeVersions(Path websiteRepoDir, LocalDate today)
             throws IOException {
@@ -165,6 +165,9 @@ public class VersionResolver {
         // Deduplicate by minor (keep the one with the highest patch version)
         Map<String, CamelRelease> byMinor = new HashMap<>();
         for (CamelRelease r : all) {
+            if (r.date() != null && r.date().isAfter(today)) {
+                continue;
+            }
             CamelRelease existing = byMinor.get(r.minor());
             if (existing == null || compareVersions(r.version(), existing.version()) > 0) {
                 byMinor.put(r.minor(), r);
@@ -180,10 +183,10 @@ public class VersionResolver {
             }
         }
 
-        // Latest non-LTS: the single non-LTS release with the highest minor version
+        // Select the latest line first: a newer LTS supersedes all older non-LTS releases.
         byMinor.values().stream()
-                .filter(r -> !r.lts())
                 .max((a, b) -> compareVersions(a.minor(), b.minor()))
+                .filter(r -> !r.lts())
                 .ifPresent(active::add);
 
         // Sort by minor version ascending

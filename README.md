@@ -33,10 +33,12 @@ No Docker. No Docling. No external tokens.
 
 Versions are discovered at build time -- nothing is hardcoded.
 
-1. **Active versions** -- the indexer clones `apache/camel-website` and parses release frontmatter (`content/releases/release-*.md`) to find active LTS versions (where `eol > today`) and the latest non-LTS release
+1. **Active versions** -- the indexer refreshes `apache/camel-website` and parses release frontmatter (`content/releases/release-*.md`). It selects every supported LTS line (`kind: lts`, `eol > today`), plus the latest release line only when it is non-LTS. A latest LTS release therefore leaves no non-LTS line selected. Draft and future-dated releases are ignored; the highest published patch represents each selected line.
 2. **Release tags** -- latest release tags are resolved via `git ls-remote` (JGit) for `camel`, `camel-spring-boot`, and `camel-quarkus`
 3. **Quarkus-to-Camel mapping** -- resolved by fetching each Quarkus release tag's `pom.xml` from GitHub and reading the `camel.major.minor` property
 4. **Tag-aware cloning** -- repos are cloned at immutable release tags (not moving branches). `.fetched-tag` marker files enable cache reuse between builds
+
+The selected lines control component documentation, runtime documentation, and Camel Catalog metadata. Historical release notes from the oldest selected line onward remain searchable, so older non-LTS versions can still appear in `camel_docs_index_info` through their release history. CVE advisories are indexed independently of this version selection.
 
 ## AsciiDoc Conversion
 
@@ -77,6 +79,26 @@ This will:
    incremental rebuilds only embed new or changed chunks)
 7. Write the Lucene index to `index/src/main/resources/knowledge-index/` plus an
    `index.json` manifest skeleton
+
+### CVE enrichment and fallback
+
+Apache Camel advisories remain the source for affected versions, fixes, severity, and descriptions.
+For optional CVSS scores/vectors and CWE classifications, the indexer reuses valid cached NVD records,
+then queries NVD. If NVD returns an HTTP error (including 429), times out, or returns an invalid or
+missing record, it falls back to [CIRCL Vulnerability-Lookup](https://circl.lu/services/cve-search/),
+using its FKIE mirror of NVD data. A mirror can lag behind NVD; only a record matching the requested
+CVE ID is accepted.
+
+No API key is required. Uncached requests are spaced at least 6.1 seconds apart across both services.
+Each request has a 15-second deadline including its response body, with a 5-second connection timeout.
+HTTP 429/503 responses put that service on cooldown according to `Retry-After` (30 seconds when absent
+or invalid); the other service is still eligible. Each lookup attempts each available service once.
+
+Successful responses are cached under `indexer/src/main/resources/apache-camel/cve-cache/`, together
+with their source, URL, and retrieval time. Existing NVD caches remain usable. If both services fail,
+the Apache advisory is still indexed without the optional enrichment; failures are not cached, so a
+later rebuild retries them. Rerun the rebuild command after updating the indexer to enrich previously
+skipped CVEs; completed index files are not changed automatically.
 
 ## Index Distribution
 
