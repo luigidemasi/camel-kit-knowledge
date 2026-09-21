@@ -1,22 +1,22 @@
 # Releasing Camel Kit Knowledge
 
-Release `0.0.1` is followed by development version `0.0.2-SNAPSHOT`.
+Release `0.0.2` is followed by development version `0.0.3-SNAPSHOT`.
 Release tags contain fixed POM versions; `main` contains the next snapshot version.
 
 ## Prepare
 
 1. Start from reviewed `main` in a clean release branch. Update README, changelog,
    documentation and the companion website. Keep Ship labeled Technology Preview.
-2. Set the reactor version to `0.0.1` and the root SCM tag to `camel-kit-knowledge-0.0.1`.
+2. Set the reactor version to `0.0.2` and the root SCM tag to `camel-kit-knowledge-0.0.2`.
 3. Run the full release build with artifact signing (a local GPG key is required):
 
    ```bash
    ./mvnw -B -Prelease,sourcecheck -Deval.requireVectors=true clean install
    ```
 
-4. Review the diff, commit with `git commit -S`, and tag that exact commit as `camel-kit-knowledge-0.0.1`.
+4. Review the diff, commit with `git commit -S`, and tag that exact commit as `camel-kit-knowledge-0.0.2`.
    Record its full SHA. Keep the generated release artifacts for inspection.
-5. Advance every reactor POM to `0.0.2-SNAPSHOT` and restore the root SCM tag to `HEAD`.
+5. Advance every reactor POM to `0.0.3-SNAPSHOT` and restore the root SCM tag to `HEAD`.
    Validate the development build, sign the next-development commit, and open a PR.
    Merge the reviewed PR and push the prepared tag before dispatching publication.
    The release workflow is manual: pushing a branch or tag does not publish artifacts.

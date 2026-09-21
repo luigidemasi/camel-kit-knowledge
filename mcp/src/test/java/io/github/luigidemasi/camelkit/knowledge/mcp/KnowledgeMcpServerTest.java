@@ -97,13 +97,21 @@ class KnowledgeMcpServerTest {
     }
 
     @Test
-    void camelDocsValidateEndpointTool_usesCamel422Catalog() {
+    void camelDocsValidateEndpointTool_usesCamel4221Catalog() {
         String json = mcpServer.camel_docs_validate_endpoint("timer:test?period=1000");
 
         assertFalse(json.contains("\"error\""), "Should not return error: " + json);
         assertTrue(json.contains("\"valid\":true"), "Should validate the timer endpoint: " + json);
-        assertTrue(json.contains("\"catalog_version\":\"4.22.0\""),
-                "Should report the Camel 4.22.0 catalog: " + json);
+        assertTrue(json.contains("\"catalog_version\":\"4.22.1\""),
+                "Should report the Camel 4.22.1 catalog: " + json);
+    }
+
+    @Test
+    void camelDocsValidateEndpointTool_acceptsSmooksOptionAddedInCamel4221() {
+        String json = mcpServer.camel_docs_validate_endpoint("smooks:smooks-config.xml?allowExternalEntities=false");
+
+        assertFalse(json.contains("\"error\""), "Should not return error: " + json);
+        assertTrue(json.contains("\"valid\":true"), "Should accept the Camel 4.22.1 Smooks option: " + json);
     }
 
     // ── Edge cases ─────────────────────────────────────────────────

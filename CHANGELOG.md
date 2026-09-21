@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-09-21
+
+### Fixed
+
+- **Camel 4.22.1 endpoint validation** — update the bundled Camel Catalog from 4.22.0
+  to 4.22.1, so valid options such as Smooks `allowExternalEntities` are recognized.
+
+### Changed
+
+- **Refreshed knowledge index** — rebuild component and runtime documentation, catalog
+  metadata, release notes, and advisories from the current published sources. The index
+  remains independently distributed through the latest `index-*` release.
+
 ## [0.0.1] - 2026-09-15
 
 First fixed-version release of the Knowledge MCP server and supporting libraries.
@@ -121,5 +134,6 @@ First fixed-version release of the Knowledge MCP server and supporting libraries
   `RetrievalQualityTest`), and stale Red Hat–era references (errata wording, `RhBuildCamelDomain`
   mentions).
 
-[Unreleased]: https://github.com/luigidemasi/camel-kit-knowledge/compare/camel-kit-knowledge-0.0.1...HEAD
+[Unreleased]: https://github.com/luigidemasi/camel-kit-knowledge/compare/camel-kit-knowledge-0.0.2...HEAD
+[0.0.2]: https://github.com/luigidemasi/camel-kit-knowledge/compare/camel-kit-knowledge-0.0.1...camel-kit-knowledge-0.0.2
 [0.0.1]: https://github.com/luigidemasi/camel-kit-knowledge/releases/tag/camel-kit-knowledge-0.0.1

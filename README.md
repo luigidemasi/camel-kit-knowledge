@@ -2,8 +2,8 @@
 
 Knowledge layer for [camel-kit](https://github.com/luigidemasi/camel-kit) -- semantic search over Apache Camel documentation, release notes, CVE advisories, and component metadata.
 
-Release **0.0.1** is the Knowledge MCP version used by Camel Kit **0.4.0**.
-Development continues at **0.0.2-SNAPSHOT**. The downloadable knowledge index has its own
+Release **0.0.2** bundles the Camel **4.22.1** catalog for endpoint validation.
+Development continues at **0.0.3-SNAPSHOT**. The downloadable knowledge index has its own
 `index-*` release version and can be updated independently of the server.
 
 ## Modules
@@ -54,6 +54,9 @@ Component documentation is converted directly from AsciiDoc to Markdown via a cu
 - Component docs render with real data (e.g. "The Kafka component supports 127 options")
 
 ## Camel Catalog Integration
+
+Endpoint validation uses the bundled Camel **4.22.1** catalog. The downloadable index
+is refreshed independently; updating it does not change the validator catalog.
 
 `CamelCatalogIndexer` downloads the `camel-catalog` JAR from Maven Central for each active version, extracts component and EIP JSON metadata, and creates document chunks with structured option data (properties, types, defaults, descriptions). If the exact version JAR is not on Maven Central (unreleased), it falls back to previous patch versions.
 
@@ -157,7 +160,7 @@ BM25 + reranker with a loud log line.
 
 ```bash
 # Via JBang (recommended)
-jbang io.github.luigidemasi:camel-kit-knowledge-mcp:0.0.1:runner
+jbang io.github.luigidemasi:camel-kit-knowledge-mcp:0.0.2:runner
 
 # Or run the local build (after ./mvnw -B clean install)
 java -jar mcp/target/camel-kit-knowledge-mcp-*-runner.jar
@@ -168,7 +171,7 @@ HTTP and SSE transports explicitly on localhost:
 
 ```bash
 jbang -Dquarkus.http.host-enabled=true -Dquarkus.http.host=127.0.0.1 \
-  -Dquarkus.http.port=9090 io.github.luigidemasi:camel-kit-knowledge-mcp:0.0.1:runner
+  -Dquarkus.http.port=9090 io.github.luigidemasi:camel-kit-knowledge-mcp:0.0.2:runner
 ```
 
 To pin a specific index or run air-gapped:
